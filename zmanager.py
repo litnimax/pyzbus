@@ -20,7 +20,7 @@ logger.setLevel(logging.INFO)
 
 context = zmq.Context()
 
-class ZManager():
+class ZManager(object):
 
     pub_socket = context.socket(zmq.PUB)
     sub_socket = context.socket(zmq.SUB)

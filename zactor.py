@@ -16,7 +16,7 @@ logger.setLevel(logging.DEBUG)
 context = zmq.Context()
 
 
-class ZActor:
+class ZActor(object):
     uid = None
     greenlets = []
 
