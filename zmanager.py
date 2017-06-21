@@ -14,9 +14,7 @@ SUB_PORT = 8882 # Collecting agent messages
 
 MESSAGE_EXPIRE_TIME = 2 # Discard all messages older then 10 seconds
 
-logging.basicConfig()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 context = zmq.Context()
 
@@ -77,7 +75,7 @@ class ZManager(object):
             return
         logger.info('Starting publish keepalive with rate {}.'.format(self.keepalive))
         while True:
-            logger.debug('Publishing keepalive with empty message')
+            logger.debug('Publishing keepalive.')
             msg = {'Message': 'KeepAlive'}
             self.pub_socket.send_multipart(['|*|', json.dumps(msg)])
             gevent.sleep(self.keepalive)
