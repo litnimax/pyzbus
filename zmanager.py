@@ -12,7 +12,7 @@ import zmq.green as zmq
 PUB_PORT = 8881 # Sending messages to agents
 SUB_PORT = 8882 # Collecting agent messages
 
-MESSAGE_EXPIRE_TIME = 2 # Discard all messages older then 10 seconds
+MESSAGE_EXPIRE_TIME = 5 # Discard all messages older then 10 seconds
 
 logger = logging.getLogger(__name__)
 
