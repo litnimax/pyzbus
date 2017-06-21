@@ -44,8 +44,8 @@ class ZActor(object):
         self.pub_socket.connect(pub_addr)
         self.sub_socket.connect(sub_addr)
         # Subscribe to messages for actor and also broadcasts
-        self.sub_socket.subscribe('|{}|'.format(self.uid))
-        self.sub_socket.subscribe('|*|'.format(self.uid))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
 
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.check_idle))
