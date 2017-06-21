@@ -9,9 +9,7 @@ import time
 import uuid
 import zmq.green as zmq
 
-logging.basicConfig()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 context = zmq.Context()
 
@@ -32,7 +30,7 @@ class ZActor(object):
 
     def __init__(self, uid=None, sub_addr='tcp://127.0.0.1:8881',
                 pub_addr='tcp://127.0.0.1:8882',
-                ping_interval=0, idle_timeout=30):
+                ping_interval=0, idle_timeout=180):
         if uid:
             self.uid = uid
         else:
@@ -66,6 +64,8 @@ class ZActor(object):
 
     # Periodic function to check that connection is alive.
     def check_idle(self):
+        if not self.idle_timeout:
+            return
         while True:
             # Check when we last a message.
             now = time.time()
@@ -111,7 +111,7 @@ class ZActor(object):
             if hasattr(self, 'on_{}'.format(msg.get('Message'))):
                 gevent.spawn(
                     getattr(
-                        self, 'on_{}'.format(msg.get('Message')))(msg))
+                        self, 'on_{}'.format(msg.get('Message'))), msg)
             else:
                 logger.error('Don\'t know how to handle message Id {}'.format(
                                                                 msg.get('Id')))
