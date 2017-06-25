@@ -5,13 +5,12 @@ from gevent.event import Event
 import json
 import logging
 import setproctitle
+import signal
 import time
 import uuid
 import zmq.green as zmq
 
 logger = logging.getLogger(__name__)
-
-context = zmq.Context()
 
 
 class ZActor(object):
@@ -23,13 +22,13 @@ class ZActor(object):
     last_msg_time = time.time()
     last_msg_time_sum = 0
 
-    reply_wait_pool = {}
+    pub_socket = sub_socket = req_socket = None
 
-    pub_socket = context.socket(zmq.PUB)
-    sub_socket = context.socket(zmq.SUB)
-
-    def __init__(self, uid=None, sub_addr='tcp://127.0.0.1:8881',
+    def __init__(self, uid=None,
+                sub_addr='tcp://127.0.0.1:8881',
                 pub_addr='tcp://127.0.0.1:8882',
+                req_addr='tcp://127.0.0.1:8883',
+                trace=False,
                 ping_interval=0, idle_timeout=180):
         if uid:
             self.uid = uid
@@ -37,18 +36,37 @@ class ZActor(object):
             self.uid = uuid.getnode()
         self.ping_interval = ping_interval
         self.idle_timeout = idle_timeout
+        self.trace = trace
 
-        # Connect sockets
+        self.context = zmq.Context()
+
+        self.req_socket = self.context.socket(zmq.REQ)
+        self.req_socket.connect(req_addr)
+
+        self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.connect(pub_addr)
+
+        self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(sub_addr)
+
+        self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
+        self.pub_socket.setsockopt(zmq.IDENTITY, self.uid)
         # Subscribe to messages for actor and also broadcasts
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
-
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.check_idle))
         self.greenlets.append(gevent.spawn(self.receive))
         self.greenlets.append(gevent.spawn(self.ping))
+        # Install signal handler
+        gevent.signal(signal.SIGINT, self.stop)
+        gevent.signal(signal.SIGTERM, self.stop)
+
+
+    def stop(self):
+        logging.debug('Stopping.')
+        self.sub_socket.close()
+        self.pub_socket.close()
 
 
     def spawn(self, func):
@@ -94,33 +112,30 @@ class ZActor(object):
             self.last_msg_time_sum = 0
             msg = json.loads(msg)
             msg.update({'Received': time.time()})
-            logger.debug('Received: {}'.format(json.dumps(msg, indent=4)))
+            if self.trace:
+                logger.debug('Received: {}'.format(json.dumps(msg, indent=4)))
 
-            # Check if it a reply, if so pass the message to internal reply wait pool.
-            if msg.get('ReplyId'):
-                if self.reply_wait_pool.get(msg.get('ReplyId')):
-                    # There is waiting message, put reply there
-                    self.reply_wait_pool.get(msg.get('ReplyId'))['reply'] = msg
-                    self.reply_wait_pool.get(msg.get('ReplyId'))['event'].set()
-                    continue
-                else:
-                    # Reply to a message that is not expected.
-                    logger.error('Reply to non-existent message: {}'.format(msg))
-                    continue
             # Yes, a bit of magic here for easier use IMHO.
             if hasattr(self, 'on_{}'.format(msg.get('Message'))):
                 gevent.spawn(
                     getattr(
                         self, 'on_{}'.format(msg.get('Message'))), msg)
             else:
-                logger.error('Don\'t know how to handle message Id {}'.format(
-                                                                msg.get('Id')))
+                logger.error('Don\'t know how to handle message: {}'.format(
+                    json.dumps(msg, indent=4)))
+
                 continue
 
 
     def handle_failure(self, msg):
         # TODO: When asked and got an error, send reply with error info.
         pass
+
+
+    def check_reply(self, msg, new_msg):
+        if msg.get('ReplyRequest'):
+            new_msg['ReplyToId'] = msg['Id']
+            return True
 
 
     def tell(self, msg):
@@ -135,7 +150,7 @@ class ZActor(object):
         self.pub_socket.send_json(msg)
 
 
-    def ask(self, msg, timeout=5):
+    def ask(self, msg):
         # This is used to send a message to the bus and wait for reply
         self.sent_message_count += 1
         msg_id = uuid.uuid4().hex
@@ -143,21 +158,9 @@ class ZActor(object):
             'Id': msg_id,
             'SendTime': time.time(),
             'From': self.uid,
-            # WTF is that needed? 'Sequence': self.sent_message_count,
         })
-        self.pub_socket.send_json(msg)
-        self.reply_wait_pool[msg_id] = {
-            'event':Event(),
-            'reply': None}
-        self.reply_wait_pool[msg_id]['event'].wait(timeout)
-        reply = self.reply_wait_pool[msg_id]['reply']
-        if not reply:
-            logger.warning('No reply received for message {}'.format(
-                json.dumps(msg, indent=4)))
-
-        ret = reply and reply.copy()
-        del self.reply_wait_pool[msg_id]
-        return ret
+        self.req_socket.send_json(msg)
+        return self.req_socket.recv_json()
 
 
     def ping(self):
@@ -166,6 +169,7 @@ class ZActor(object):
             return
         else:
             logger.info('Starting ping every {} seconds.'.format(self.ping_interval))
+        gevent.sleep(2) # Give time for subscriber to setup
         while True:
             reply = self.ask({
                 'Message': 'Ping',
@@ -181,18 +185,22 @@ class ZActor(object):
         pass
 
 
-
     def on_Ping(self, msg):
         logger.debug('Ping received from {}, sending Pong'.format(msg.get('From')))
-        self.tell({
+        new_msg = {
             'Message': 'Pong',
             'To': msg.get('From'),
-            'ReplyId': msg.get('Id'),
-        })
+        }
+        self.check_reply(msg, new_msg)
+        self.tell(new_msg)
 
 
     def on_KeepAlive(self, msg):
         logger.debug('KeepAlive received.')
+
+
+    def on_Pong(self, msg):
+        logger.debug('Pong received.')
 
 
     # TODO: Ideas
