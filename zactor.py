@@ -6,6 +6,7 @@ import json
 import logging
 import setproctitle
 import signal
+import sys
 import time
 import uuid
 import zmq.green as zmq
@@ -67,11 +68,12 @@ class ZActor(object):
         logging.debug('Stopping.')
         self.sub_socket.close()
         self.pub_socket.close()
+        sys.exit(0)
 
 
-    def spawn(self, func):
+    def spawn(self, func, *args, **kwargs):
         try:
-            self.greenlets.append(gevent.spawn(func))
+            self.greenlets.append(gevent.spawn(func, *args, **kwargs))
         except Exception as e:
             logger.exception(repr(e))
 
@@ -147,6 +149,10 @@ class ZActor(object):
             'From': self.uid,
             'Sequence': self.sent_message_count,
         })
+        if self.trace:
+            logger.debug('Telling: {}'.format(json.dumps(
+                msg, indent=4
+            )))
         self.pub_socket.send_json(msg)
 
 
@@ -160,6 +166,10 @@ class ZActor(object):
             'From': self.uid,
         })
         self.req_socket.send_json(msg)
+        if self.trace:
+            logger.debug('Asking: {}'.format(json.dumps(
+                msg, indent=4
+            )))
         return self.req_socket.recv_json()
 
 
