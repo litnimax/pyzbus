@@ -72,7 +72,12 @@ class ZManager(object):
             try:
                 msg = self.sub_socket.recv_json()
                 if self.trace:
-                    logger.debug('[RECEIVER] {}'.format(json.dumps(msg, indent=4)))
+                    if msg.get('ReplyToId'):
+                        logger.debug('[REPLIED] {}'.format(
+                            json.dumps(msg, indent=4)))
+                    else:
+                        logger.debug('[RECEIVED] {}'.format(
+                            json.dumps(msg, indent=4)))
                 # Check expiration
                 time_diff = time.time() - msg.get('SendTime', 0)
                 if time_diff > MESSAGE_EXPIRE_TIME:
@@ -107,7 +112,7 @@ class ZManager(object):
                 msg = self.rep_socket.recv_json()
                 msg_id = msg.get('Id')
                 if self.trace:
-                    logger.debug('[REPLIER] {}'.format(json.dumps(msg, indent=4)))
+                    logger.debug('[REQUESTED] {}'.format(json.dumps(msg, indent=4)))
 
                 # Replicate to subscriptions
                 msg['ReplyRequest'] = True
@@ -122,10 +127,12 @@ class ZManager(object):
                 if not reply:
                     logger.warning('No reply received for message {}'.format(
                         json.dumps(msg, indent=4)))
-
-                ret = reply and reply.copy()
-                del self.rep_wait_pool[msg_id]
-                self.rep_socket.send_json(ret)
+                    del self.rep_wait_pool[msg_id]
+                    self.rep_socket.send_json({})
+                else:
+                    ret = reply and reply.copy()
+                    del self.rep_wait_pool[msg_id]
+                    self.rep_socket.send_json(ret)
 
             except Exception as e:
                 logger.exception(e)
