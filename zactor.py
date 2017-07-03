@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 # Decorators
 def check_reply(func):
-    def wrapper(agent, msg):
+    def wrapper(agent, msg, *args, **kwargs):
+        res = func(agent, msg, *args, **kwargs)
         if msg.get('ReplyRequest'):
-            res = func(agent, msg)
             if not res:
                 res = {}
             reply = {
@@ -27,7 +27,7 @@ def check_reply(func):
             }
             reply.update(res) # Update reply with results from func.
             agent.tell(reply)
-            return res
+        return res
     return wrapper
 
 
@@ -54,6 +54,8 @@ class ZActor(object):
     }
 
     def __init__(self, uid=None, settings={}):
+        # Update startup settings
+        self.settings.update(settings)
         # Adjust debug level
         logger.setLevel(
             level=logging.DEBUG if self.settings.get('Debug') else logging.INFO)
@@ -62,8 +64,6 @@ class ZActor(object):
         else:
             self.uid = str(uuid.getnode())
         logging.info('Agent UID: {}'.format(self.uid))
-        # Update startup settings
-        self.settings.update(settings)
 
         self.context = zmq.Context()
 
@@ -210,7 +210,13 @@ class ZActor(object):
 
         except zmq.ZMQError as e:
             logger.error('Ask ZMQ error: {}'.format(e))
-            print 111, 'Operation cannot be accomplished in current state' in repr(e)
+            if 'Operation cannot be accomplished in current state' in repr(e):
+                # Attempt recoonect
+                logger.info('Reconnect REQ socket.')
+                self.req_socket.close()
+                self.req_socket.connect(self.settings.get('ReqAddr'))
+                # Re-Ask
+                self.ask(msg)
 
 
     def ping(self):
@@ -250,10 +256,11 @@ class ZActor(object):
         logger.info('Settings saved in memory :-)')
 
 
-    def apply_settings(self):
+    def apply_settings(self, new_settings):
         logger.info('Apply settings not implemented')
 
 
+    @check_reply
     def on_UpdateSettings(self, msg):
         s = self._remove_msg_headers(msg)
         if self.settings.get('Trace'):
@@ -262,7 +269,7 @@ class ZActor(object):
         else:
             logger.info('Settings updated.')
         self.settings.update(s)
-        self.apply_settings()
+        self.apply_settings(s)
         self.save_settings()
 
 
