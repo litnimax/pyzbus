@@ -120,7 +120,7 @@ class ZActor(object):
             self.settings.update(local_settings)
             self.logger.info('Loaded settings.local.')
         except Exception as e:
-            self.logger.warning('Cannot import local_settings: {}'.format(e))
+            self.logger.warning('Cannot load settings.local: {}'.format(e))
 
 
     def apply_settings(self, new_settings):
