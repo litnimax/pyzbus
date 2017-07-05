@@ -11,7 +11,6 @@ import time
 import uuid
 import zmq.green as zmq
 
-logger = logging.getLogger(__name__)
 
 # Decorators
 def check_reply(func):
@@ -56,9 +55,19 @@ class ZActor(object):
     def __init__(self, uid=None, settings={}):
         # Update startup settings
         self.settings.update(settings)
-        # Adjust debug level
-        logger.setLevel(
-            level=logging.DEBUG if self.settings.get('Debug') else logging.INFO)
+
+        # Init logger
+        self.logger = logging.getLogger(__name__)
+        self.logger.propagate = 0
+        self.logger.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+        ch = logging.StreamHandler()
+        ch.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
+
         if uid:
             self.uid = uid
         else:
@@ -101,10 +110,18 @@ class ZActor(object):
         try:
             self.greenlets.append(gevent.spawn(func, *args, **kwargs))
         except Exception as e:
-            logger.exception(repr(e))
+            self.logger.exception(repr(e))
+
+    def spawn_later(self, delay, func, *args, **kwargs):
+        try:
+            self.greenlets.append(gevent.spawn_later(delay, func, *args, **kwargs))
+        except Exception as e:
+            self.logger.exception(repr(e))
+
+
 
     def run(self):
-        logger.info('Started actor with uid {}.'.format(self.uid))
+        self.logger.info('Started actor with uid {}.'.format(self.uid))
         gevent.joinall(self.greenlets)
 
 
@@ -112,15 +129,15 @@ class ZActor(object):
     def check_idle(self):
         idle_timeout = self.settings.get('IdleTimeout')
         if not idle_timeout:
-            logger.info('Idle timeout watchdog disabled.')
+            self.logger.info('Idle timeout watchdog disabled.')
             return
-        logger.info('Idle timeout watchdog started.')
+        self.logger.info('Idle timeout watchdog started.')
         while True:
             # Check when we last a message.
             now = time.time()
             if now - self.last_msg_time > idle_timeout:
                 self.last_msg_time_sum += idle_timeout
-                logger.warning(
+                self.logger.warning(
                     'Idle timeout! No messages for last {} seconds.'.format(
                                                         self.last_msg_time_sum))
             gevent.sleep(idle_timeout)
@@ -128,13 +145,13 @@ class ZActor(object):
 
     def subscribe(self, s):
         # Add additional subscriptions here.
-        logger.debug('Subscribed for {}.'.format(s))
+        self.logger.debug('Subscribed for {}.'.format(s))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(s))
 
 
     def receive(self):
         # Actor sibscription receive loop
-        logger.debug('Receiver has been started.')
+        self.logger.debug('Receiver has been started.')
         while True:
             header, msg = self.sub_socket.recv_multipart()
             # Update counters
@@ -144,7 +161,7 @@ class ZActor(object):
             msg = json.loads(msg)
             msg.update({'Received': time.time()})
             if self.settings.get('Trace'):
-                logger.debug('Received: {}'.format(json.dumps(msg, indent=4)))
+                self.logger.debug('Received: {}'.format(json.dumps(msg, indent=4)))
 
             # Yes, a bit of magic here for easier use IMHO.
             if hasattr(self, 'on_{}'.format(msg.get('Message'))):
@@ -152,7 +169,7 @@ class ZActor(object):
                     getattr(
                         self, 'on_{}'.format(msg.get('Message'))), msg)
             else:
-                logger.error('Don\'t know how to handle message: {}'.format(
+                self.logger.error('Don\'t know how to handle message: {}'.format(
                     json.dumps(msg, indent=4)))
                 continue
 
@@ -181,7 +198,7 @@ class ZActor(object):
             'Sequence': self.sent_message_count,
         })
         if self.settings.get('Trace'):
-            logger.debug('Telling: {}'.format(json.dumps(
+            self.logger.debug('Telling: {}'.format(json.dumps(
                 msg, indent=4
             )))
         self.pub_socket.send_json(msg)
@@ -197,7 +214,7 @@ class ZActor(object):
             'From': self.uid,
         })
         if self.settings.get('Trace'):
-            logger.debug('Asking: {}'.format(json.dumps(
+            self.logger.debug('Asking: {}'.format(json.dumps(
                 msg, indent=4
             )))
         try:
@@ -209,10 +226,10 @@ class ZActor(object):
             return res
 
         except zmq.ZMQError as e:
-            logger.error('Ask ZMQ error: {}'.format(e))
+            self.logger.error('Ask ZMQ error: {}'.format(e))
             if 'Operation cannot be accomplished in current state' in repr(e):
                 # Attempt recoonect
-                logger.info('Reconnect REQ socket.')
+                self.logger.info('Reconnect REQ socket.')
                 self.req_socket.close()
                 self.req_socket.connect(self.settings.get('ReqAddr'))
                 # Re-Ask
@@ -220,12 +237,14 @@ class ZActor(object):
 
 
     def ping(self):
+        gevent.sleep(10) # Delay before 1-st ping, also allows
+        # PingInterval to be received from settings.
         ping_interval = self.settings.get('PingInterval')
         if not ping_interval:
-            logger.info('Ping disabled.')
+            self.logger.info('Ping disabled.')
             return
         else:
-            logger.info('Starting ping every {} seconds.'.format(ping_interval))
+            self.logger.info('Starting ping every {} seconds.'.format(ping_interval))
         gevent.sleep(2) # Give time for subscriber to setup
         while True:
             reply = self.ask({
@@ -233,7 +252,7 @@ class ZActor(object):
                 'To': self.uid,
             })
             if not reply:
-                logger.warning('Ping reply is not received.')
+                self.logger.warning('Ping reply is not received.')
             gevent.sleep(ping_interval)
 
 
@@ -244,41 +263,42 @@ class ZActor(object):
 
     @check_reply
     def on_Ping(self, msg):
-        logger.debug('Ping received from {}, sending Pong'.format(msg.get('From')))
-        new_msg = {
-            'Message': 'Pong',
-            'To': msg.get('From'),
-        }
-        self.tell(new_msg)
+        self.logger.debug('Ping received from {}.'.format(msg.get('From')))
+        if not msg.get('ReplyRequest'):
+            new_msg = {
+                'Message': 'Pong',
+                'To': msg.get('From'),
+            }
+            self.tell(new_msg)
 
 
     def save_settings(self):
-        logger.info('Settings saved in memory :-)')
+        self.logger.info('Settings saved in memory :-)')
 
 
     def apply_settings(self, new_settings):
-        logger.info('Apply settings not implemented')
+        self.logger.info('Apply settings not implemented')
 
 
     @check_reply
     def on_UpdateSettings(self, msg):
         s = self._remove_msg_headers(msg)
         if self.settings.get('Trace'):
-            logger.debug('[UpdateSettings] Received: {}'.format(
+            self.logger.debug('[UpdateSettings] Received: {}'.format(
                 json.dumps(s, indent=4)))
         else:
-            logger.info('Settings updated.')
+            self.logger.info('Settings updated.')
         self.settings.update(s)
         self.apply_settings(s)
         self.save_settings()
 
 
     def on_KeepAlive(self, msg):
-        logger.debug('KeepAlive received.')
+        self.logger.debug('KeepAlive received.')
 
 
     def on_Pong(self, msg):
-        logger.debug('Pong received.')
+        self.logger.debug('Pong received.')
 
 
     # TODO: Ideas
