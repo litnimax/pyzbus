@@ -39,7 +39,8 @@ class ZActor(object):
     sent_message_count = 0
     last_msg_time = time.time()
     last_msg_time_sum = 0
-
+    pong_event = Event()
+    sockets_reconnect_active = Event()
     pub_socket = sub_socket = req_socket = None
 
     settings = {
@@ -57,7 +58,10 @@ class ZActor(object):
         self.logger = self.get_logger()
         # Update startup settings
         self.load_settings(settings)
-
+        # Adjust logger with new settings
+        self.logger.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+        # Find my UID
         uid = self.settings.get('UID')
         if uid:
             try:
@@ -71,21 +75,10 @@ class ZActor(object):
         self.logger.info('UID: {}.'.format(self.uid))
 
         self.context = zmq.Context()
+        self._connect_sub_socket()
+        self._connect_pub_socket()
+        self._connect_req_socket()
 
-        self.req_socket = self.context.socket(zmq.REQ)
-        self.req_socket.connect(self.settings.get('ReqAddr'))
-
-        self.pub_socket = self.context.socket(zmq.PUB)
-        self.pub_socket.connect(self.settings.get('PubAddr'))
-
-        self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.connect(self.settings.get('SubAddr'))
-
-        self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
-        self.pub_socket.setsockopt(zmq.IDENTITY, self.uid)
-        # Subscribe to messages for actor and also broadcasts
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.check_idle))
         self.greenlets.append(gevent.spawn(self.receive))
@@ -95,13 +88,50 @@ class ZActor(object):
         gevent.signal(signal.SIGTERM, self.stop)
 
 
+    def _connect_req_socket(self):
+        self.req_socket = self.context.socket(zmq.REQ)
+        self.req_socket.connect(self.settings.get('ReqAddr'))
+        self.logger.debug('Connected REQ socket.')
+
+    def _connect_pub_socket(self):
+        self.pub_socket = self.context.socket(zmq.PUB)
+        self.pub_socket.connect(self.settings.get('PubAddr'))
+        self.pub_socket.setsockopt(zmq.IDENTITY, self.uid)
+        self.logger.debug('Connected PUB socket.')
+
+    def _connect_sub_socket(self):
+        self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.connect(self.settings.get('SubAddr'))
+        self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
+        # Subscribe to messages for actor and also broadcasts
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
+        self.logger.debug('Connected SUB socket.')
+
+
+    def _disconnect_pub_socket(self):
+        self.pub_socket.setsockopt(zmq.LINGER, 0)
+        self.pub_socket.close()
+        self.logger.debug('Disconnected PUB socket.')
+
+    def _disconnect_sub_socket(self):
+        self.sub_socket.setsockopt(zmq.LINGER, 0)
+        self.sub_socket.close()
+        self.logger.debug('Disconnected SUB socket.')
+
+    def _disconnect_req_socket(self):
+        self.req_socket.setsockopt(zmq.LINGER, 0)
+        self.req_socket.close()
+        self.logger.debug('Disconnected REQ socket.')
+
+
     def save_settings(self):
         try:
             with open('settings.cache', 'w') as file:
                 file.write('{}\n'.format(
                     json.dumps(self.settings, indent=4)
                 ))
-            self.logger.info('Saved settings.cache')
+            self.logger.debug('Saved settings.cache')
         except Exception as e:
             self.logger.error('Cannot save settings.cache: {}'.format(e))
 
@@ -195,7 +225,19 @@ class ZActor(object):
         # Actor sibscription receive loop
         self.logger.debug('Receiver has been started.')
         while True:
-            header, msg = self.sub_socket.recv_multipart()
+            try:
+                header, msg = self.sub_socket.recv_multipart()
+            except zmq.ZMQError as e:
+                if not self.sockets_reconnect_active.is_set():
+                    self.sockets_reconnect_active.set()
+                    try:
+                        self._disconnect_sub_socket()
+                        self._connect_sub_socket()
+                    finally:
+                        self.sockets_reconnect_active.clear()
+                continue
+
+
             # Update counters
             self.receive_message_count +1
             self.last_msg_time = time.time()
@@ -244,6 +286,7 @@ class ZActor(object):
                 msg, indent=4
             )))
         self.pub_socket.send_json(msg)
+        return msg
 
 
     def ask(self, msg, attempt=1):
@@ -270,11 +313,9 @@ class ZActor(object):
             else:
                 self.logger.warning('No reply received for {}.'.format(json.dumps(msg,
                                                                     indent=4)))
-                self.req_socket.setsockopt(zmq.LINGER, 0)
-                self.req_socket.close()
+                self._disconnect_req_socket()
                 poll.unregister(self.req_socket)
-                self.req_socket = self.context.socket(zmq.REQ)
-                self.req_socket.connect(self.settings.get('ReqAddr'))
+                self._connect_req_socket()
                 self.logger.info('Reconnected REQ socket.')
                 # Re-Ask second time
                 if attempt < 2:
@@ -282,12 +323,13 @@ class ZActor(object):
                     self.ask(msg, attempt=2)
                 else:
                     self.logger.debug('Forgetting.')
+                    return {}
         except Exception as e:
             self.logger.error('[Ask] {}'.format(e))
 
 
     def ping(self):
-        gevent.sleep(10) # Delay before 1-st ping, also allows
+        gevent.sleep(1) # Delay before 1-st ping, also allows
         # PingInterval to be received from settings.
         ping_interval = self.settings.get('PingInterval')
         if not ping_interval:
@@ -296,13 +338,49 @@ class ZActor(object):
         else:
             self.logger.info('Starting ping every {} seconds.'.format(ping_interval))
         gevent.sleep(2) # Give time for subscriber to setup
+
+
+        def reconnect_pub_sub():
+            self.sockets_reconnect_active.set()
+            try:
+                self._disconnect_pub_socket()
+                self._disconnect_sub_socket()
+                self._connect_sub_socket()
+                self._connect_pub_socket()
+            finally:
+                self.sockets_reconnect_active.clear()
+
+
         while True:
+            # Check REQ socket and SUB sockets at once.
             reply = self.ask({
                 'Message': 'Ping',
                 'To': self.uid,
             })
             if not reply:
                 self.logger.warning('Ping reply is not received.')
+            # Now check PUB socket
+            ret = self.tell({
+                'Message': 'Ping',
+                'To': self.uid,
+            })
+            if not self.pong_event.wait(timeout=5):
+                # Timeout, no ping at all.
+                reconnect_pub_sub()
+                self.logger.warning('PUB / SUB sockets reconnected.')
+                gevent.sleep(1)
+
+            else:
+                # We got an on_Pong event
+                self.pong_event.clear()
+                if self.last_ping_id != ret.get('Id'):
+                    self.logger.warning('Last ping Id {} != {}!'.format(
+                        self.last_ping_id, ret.get('Id')
+                    ))
+                    reconnect_pub_sub()
+                    self.logger.warning('PUB / SUB sockets reconnected.')
+                    gevent.sleep(1)
+
             gevent.sleep(ping_interval)
 
 
@@ -313,13 +391,25 @@ class ZActor(object):
 
     @check_reply
     def on_Ping(self, msg):
-        self.logger.debug('Ping received from {}.'.format(msg.get('From')))
+        From = msg.get('From') if msg.get('From') != self.uid else 'myself'
+        self.logger.debug('Ping received from {}.'.format(From))
         if not msg.get('ReplyRequest'):
+            # Send Pong message only for tellers not askers.
             new_msg = {
                 'Message': 'Pong',
                 'To': msg.get('From'),
+                'PingId': msg.get('Id'),
             }
             self.tell(new_msg)
+
+
+    def on_Pong(self, msg):
+        From = msg.get('From') if msg.get('From') != self.uid else 'myself'
+        self.logger.debug('Pong received from {}.'.format(From))
+        self.last_ping_id = msg.get('PingId')
+        self.pong_event.set()
+
+
 
 
     @check_reply
@@ -337,10 +427,6 @@ class ZActor(object):
 
     def on_KeepAlive(self, msg):
         self.logger.debug('KeepAlive received.')
-
-
-    def on_Pong(self, msg):
-        self.logger.debug('Pong received.')
 
 
     # TODO: Ideas
