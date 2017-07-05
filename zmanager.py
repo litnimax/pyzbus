@@ -136,7 +136,7 @@ class ZManager(object):
 
             except Exception as e:
                 logger.exception(e)
-                sys.exit(0)
+                
 
 
 

@@ -43,36 +43,32 @@ class ZActor(object):
     pub_socket = sub_socket = req_socket = None
 
     settings = {
+        'UID': False,
         'SubAddr': 'tcp://127.0.0.1:8881',
         'PubAddr': 'tcp://127.0.0.1:8882',
         'ReqAddr': 'tcp://127.0.0.1:8883',
         'PingInterval': 0,
-        'IdleTimeout': 180,
+        'IdleTimeout': 200,
         'Trace': True,
         'Debug': True,
     }
 
-    def __init__(self, uid=None, settings={}):
+    def __init__(self, settings={}):
+        self.logger = self.get_logger()
         # Update startup settings
-        self.settings.update(settings)
+        self.load_settings(settings)
 
-        # Init logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.propagate = 0
-        self.logger.setLevel(level=logging.DEBUG if self.settings.get(
-            'Debug') else logging.INFO)
-        ch = logging.StreamHandler()
-        ch.setLevel(level=logging.DEBUG if self.settings.get(
-            'Debug') else logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
-
+        uid = self.settings.get('UID')
         if uid:
-            self.uid = uid
+            try:
+                #int(uid) # Check that it is integer as zmq IDENTITY must be digits.
+                self.uid = str(uid)
+            except ValueError:
+                self.logger.error('UID must be integer, not using {}'.format(uid))
+                self.uid = str(uuid.getnode())
         else:
             self.uid = str(uuid.getnode())
-        logging.info('Agent UID: {}'.format(self.uid))
+        self.logger.info('UID: {}.'.format(self.uid))
 
         self.context = zmq.Context()
 
@@ -99,8 +95,54 @@ class ZActor(object):
         gevent.signal(signal.SIGTERM, self.stop)
 
 
+    def save_settings(self):
+        try:
+            with open('settings.cache', 'w') as file:
+                file.write('{}\n'.format(
+                    json.dumps(self.settings, indent=4)
+                ))
+            self.logger.info('Saved settings.cache')
+        except Exception as e:
+            self.logger.error('Cannot save settings.cache: {}'.format(e))
+
+
+    def load_settings(self, settings):
+        self.settings.update(settings)
+        try:
+            settings_cache = json.loads(open('settings.cache').read())
+            self.settings.update(settings_cache)
+            self.logger.info('Loaded settings.cache.')
+        except Exception as e:
+            self.logger.warning('Did not import cached settings: {}'.format(e))
+        # Open local settings and override settings.
+        try:
+            local_settings = json.loads(open('settings.local').read())
+            self.settings.update(local_settings)
+            self.logger.info('Loaded settings.local.')
+        except Exception as e:
+            self.logger.warning('Cannot import local_settings: {}'.format(e))
+
+
+    def apply_settings(self, new_settings):
+        self.logger.info('Apply settings not implemented')
+
+
+    def get_logger(self):
+        logger = logging.getLogger(__name__)
+        logger.propagate = 0
+        logger.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+        ch = logging.StreamHandler()
+        ch.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+        return logger
+
+
     def stop(self):
-        logging.debug('Stopping.')
+        self.logger.debug('Stopping.')
         self.sub_socket.close()
         self.pub_socket.close()
         sys.exit(0)
@@ -221,7 +263,7 @@ class ZActor(object):
             self.req_socket.send_json(msg)
             res = self.req_socket.recv_json()
             if not res:
-                logging.warning('No reply received for {}.'.format(json.dumps(msg,
+                self.logger.warning('No reply received for {}.'.format(json.dumps(msg,
                                                                     indent=4)))
             return res
 
@@ -270,14 +312,6 @@ class ZActor(object):
                 'To': msg.get('From'),
             }
             self.tell(new_msg)
-
-
-    def save_settings(self):
-        self.logger.info('Settings saved in memory :-)')
-
-
-    def apply_settings(self, new_settings):
-        self.logger.info('Apply settings not implemented')
 
 
     @check_reply
