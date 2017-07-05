@@ -40,7 +40,7 @@ class ZActor(object):
     last_msg_time = time.time()
     last_msg_time_sum = 0
     pong_event = Event()
-    sockets_reconnect_active = Event()
+    last_pub_sub_reconnect = None
     pub_socket = sub_socket = req_socket = None
 
     settings = {
@@ -228,13 +228,11 @@ class ZActor(object):
             try:
                 header, msg = self.sub_socket.recv_multipart()
             except zmq.ZMQError as e:
-                if not self.sockets_reconnect_active.is_set():
-                    self.sockets_reconnect_active.set()
-                    try:
-                        self._disconnect_sub_socket()
-                        self._connect_sub_socket()
-                    finally:
-                        self.sockets_reconnect_active.clear()
+                # This can be error due to ping() closing SUB socket.
+                if self.last_pub_sub_reconnect - time.time() > 1:
+                    self._disconnect_sub_socket()
+                    self._connect_sub_socket()
+                    self.logger.warning('SUB socket error: {}'.format(e))
                 continue
 
 
@@ -341,14 +339,11 @@ class ZActor(object):
 
 
         def reconnect_pub_sub():
-            self.sockets_reconnect_active.set()
-            try:
-                self._disconnect_pub_socket()
-                self._disconnect_sub_socket()
-                self._connect_sub_socket()
-                self._connect_pub_socket()
-            finally:
-                self.sockets_reconnect_active.clear()
+            self.last_pub_sub_reconnect = time.time()
+            self._disconnect_pub_socket()
+            self._disconnect_sub_socket()
+            self._connect_sub_socket()
+            self._connect_pub_socket()
 
 
         while True:
