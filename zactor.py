@@ -246,7 +246,7 @@ class ZActor(object):
         self.pub_socket.send_json(msg)
 
 
-    def ask(self, msg):
+    def ask(self, msg, attempt=1):
         # This is used to send a message to the bus and wait for reply
         self.sent_message_count += 1
         msg_id = uuid.uuid4().hex
@@ -261,21 +261,29 @@ class ZActor(object):
             )))
         try:
             self.req_socket.send_json(msg)
-            res = self.req_socket.recv_json()
-            if not res:
+            poll = zmq.Poller()
+            poll.register(self.req_socket, zmq.POLLIN)
+            socks = dict(poll.poll(5000))
+            if socks.get(self.req_socket) == zmq.POLLIN:
+                res = self.req_socket.recv_json()
+                return res
+            else:
                 self.logger.warning('No reply received for {}.'.format(json.dumps(msg,
                                                                     indent=4)))
-            return res
-
-        except zmq.ZMQError as e:
-            self.logger.error('Ask ZMQ error: {}'.format(e))
-            if 'Operation cannot be accomplished in current state' in repr(e):
-                # Attempt recoonect
-                self.logger.info('Reconnect REQ socket.')
+                self.req_socket.setsockopt(zmq.LINGER, 0)
                 self.req_socket.close()
+                poll.unregister(self.req_socket)
+                self.req_socket = self.context.socket(zmq.REQ)
                 self.req_socket.connect(self.settings.get('ReqAddr'))
-                # Re-Ask
-                self.ask(msg)
+                self.logger.info('Reconnected REQ socket.')
+                # Re-Ask second time
+                if attempt < 2:
+                    self.logger.debug('Asking again.')
+                    self.ask(msg, attempt=2)
+                else:
+                    self.logger.debug('Forgetting.')
+        except Exception as e:
+            self.logger.error('[Ask] {}'.format(e))
 
 
     def ping(self):
