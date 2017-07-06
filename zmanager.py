@@ -15,7 +15,6 @@ import zmq.green as zmq
 
 PUB_ADDR = 'tcp://127.0.0.1:8881' # Sending messages to agents
 SUB_ADDR = 'tcp://127.0.0.1:8882' # Collecting agent messages
-REP_ADDR = 'tcp://127.0.0.1:8883' # Request / Reply (Ask)
 
 MESSAGE_EXPIRE_TIME = 5 # Discard all messages older then 10 seconds
 
@@ -24,14 +23,11 @@ logger = logging.getLogger(__name__)
 
 class ZManager(object):
 
-    pub_socket = sub_socket = rep_socket = None
-
+    pub_socket = sub_socket = None
     greenlets = []
 
-    rep_wait_pool = {}
-
     def __init__(self, keepalive=120, sub_addr=SUB_ADDR, pub_addr=PUB_ADDR,
-                 rep_addr=REP_ADDR, debug=False, trace=False):
+                 debug=False, trace=False):
         self.keepalive = keepalive
         self.trace = trace
         if debug:
@@ -45,13 +41,9 @@ class ZManager(object):
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.subscribe(b'')
         self.sub_socket.bind(sub_addr)
-        # Create REP sockets
-        self.rep_socket = self.context.socket(zmq.REP)
-        self.rep_socket.bind(rep_addr)
         # Init greenlets
         self.greenlets.append(spawn(self.do_keepalive))
         self.greenlets.append(spawn(self.sub_receive))
-        self.greenlets.append(spawn(self.rep_receive))
 
 
     def run(self):
@@ -79,59 +71,11 @@ class ZManager(object):
                             time_diff, msg))
                     continue
 
-                # Check if it a reply, if so pass the message to internal reply wait pool.
-                reply_to_id = msg.get('ReplyToId')
-                if reply_to_id:
-                    if self.rep_wait_pool.get(reply_to_id):
-                        # There is waiting message, put reply there
-                        self.rep_wait_pool.get(reply_to_id)['reply'] = msg
-                        self.rep_wait_pool.get(reply_to_id)['event'].set()
-
-                    else:
-                        # Reply to a message that is not expected.
-                        logger.error('Reply to non-existent message: {}'.format(msg))
-
-                self.pub_socket.send_multipart(['|{}|'.format(msg.get('To', 'ToNotSpecified')),
+                self.pub_socket.send_multipart(['|{}|'.format(msg.get('To')),
                                           json.dumps(msg)])
 
             except Exception as e:
                 logger.exception(e)
-
-
-    def rep_receive(self):
-        logger.debug('Starting replier.')
-        while True:
-            try:
-                msg = self.rep_socket.recv_json()
-                msg_id = msg.get('Id')
-                timeout = int(msg.get('Timeout', 5))
-                if self.trace:
-                    logger.debug('[REQUESTED] {}'.format(json.dumps(msg, indent=4)))
-
-                # Replicate to subscriptions
-                msg['ReplyRequest'] = True
-                self.pub_socket.send_multipart(['|{}|'.format(msg.get('To')),
-                                               json.dumps(msg)])
-                self.rep_wait_pool[msg_id] = {
-                    'event':Event(),
-                    'reply': {}, # Default message when no reply is got.
-                }
-                self.rep_wait_pool[msg_id]['event'].wait(timeout)
-                reply = self.rep_wait_pool[msg_id]['reply']
-                if not reply:
-                    logger.warning('No reply received for message {}'.format(
-                        json.dumps(msg, indent=4)))
-                    del self.rep_wait_pool[msg_id]
-                    self.rep_socket.send_json({})
-                else:
-                    ret = reply and reply.copy()
-                    del self.rep_wait_pool[msg_id]
-                    self.rep_socket.send_json(ret)
-
-            except Exception as e:
-                logger.exception(e)
-
-
 
 
     def do_keepalive(self):

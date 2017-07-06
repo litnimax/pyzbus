@@ -16,16 +16,17 @@ import zmq.green as zmq
 def check_reply(func):
     def wrapper(agent, msg, *args, **kwargs):
         res = func(agent, msg, *args, **kwargs)
-        if msg.get('ReplyRequest'):
-            if not res:
-                res = {}
-            reply = {
-                # No 'To' header here as reply is returned by ask()
-                'Message': '{}Reply'.format(msg.get('Message')),
-                'ReplyToId': msg['Id']
-            }
-            reply.update(res) # Update reply with results from func.
-            agent.tell(reply)
+        if msg.get('ReplyTo'):
+            for to in msg.get('ReplyTo'):
+                if not res:
+                    res = {}
+                reply = {
+                    'To': to,
+                    'Message': '{}Reply'.format(msg.get('Message')),
+                    'ReplyToId': msg['Id']
+                }
+                res.update(reply) # Update reply with results from func.
+                agent.tell(res)
         return res
     return wrapper
 
@@ -40,15 +41,15 @@ class ZActor(object):
     last_msg_time = time.time()
     last_msg_time_sum = 0
     pong_event = Event()
+    ask_pool = {} # Here we keep requests that we want replies
     last_pub_sub_reconnect = None
-    pub_socket = sub_socket = req_socket = None
+    pub_socket = sub_socket = None
 
 
     settings = {
         'UID': False,
         'SubAddr': 'tcp://127.0.0.1:8881',
         'PubAddr': 'tcp://127.0.0.1:8882',
-        'ReqAddr': 'tcp://127.0.0.1:8883',
         'PingInterval': 0,
         'IdleTimeout': 200,
         'Trace': True,
@@ -71,9 +72,9 @@ class ZActor(object):
         self.logger.info('UID: {}.'.format(self.uid))
 
         self.context = zmq.Context()
+        self.last_pub_sub_reconnect = time.time()
         self._connect_sub_socket()
         self._connect_pub_socket()
-        self._connect_req_socket()
 
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.check_idle))
@@ -83,11 +84,6 @@ class ZActor(object):
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
 
-
-    def _connect_req_socket(self):
-        self.req_socket = self.context.socket(zmq.REQ)
-        self.req_socket.connect(self.settings.get('ReqAddr'))
-        self.logger.debug('Connected REQ socket.')
 
     def _connect_pub_socket(self):
         self.pub_socket = self.context.socket(zmq.PUB)
@@ -114,12 +110,6 @@ class ZActor(object):
         self.sub_socket.setsockopt(zmq.LINGER, 0)
         self.sub_socket.close()
         self.logger.debug('Disconnected SUB socket.')
-
-    def _disconnect_req_socket(self):
-        self.req_socket.setsockopt(zmq.LINGER, 0)
-        self.req_socket.close()
-        self.logger.debug('Disconnected REQ socket.')
-
 
     def save_settings(self):
         try:
@@ -169,7 +159,6 @@ class ZActor(object):
 
     def stop(self):
         self.logger.info('Stopping...')
-        self._disconnect_req_socket()
         self._disconnect_sub_socket()
         self._disconnect_pub_socket()
 
@@ -231,25 +220,41 @@ class ZActor(object):
                     self.logger.warning('SUB socket error: {}'.format(e))
                 continue
 
-
             # Update counters
             self.receive_message_count +1
             self.last_msg_time = time.time()
             self.last_msg_time_sum = 0
             msg = json.loads(msg)
             msg.update({'Received': time.time()})
-            if self.settings.get('Trace'):
-                self.logger.debug('Received: {}'.format(json.dumps(msg, indent=4)))
 
-            # Yes, a bit of magic here for easier use IMHO.
-            if hasattr(self, 'on_{}'.format(msg.get('Message'))):
-                gevent.spawn(
-                    getattr(
-                        self, 'on_{}'.format(msg.get('Message'))), msg)
-            else:
-                self.logger.error('Don\'t know how to handle message: {}'.format(
-                    json.dumps(msg, indent=4)))
+            # Check if it is a reply
+            reply_to_id = msg.get('ReplyToId')
+            if reply_to_id:
+                # Yes, find who is waiting for it.
+                if self.ask_pool.get(reply_to_id):
+                    self.ask_pool[reply_to_id][
+                        'result'] = msg
+                    self.ask_pool[reply_to_id]['event'].set()
+                else:
+                    self.logger.error('Got an unexpected reply: {}'.format(
+                        json.dumps(msg, indent=4)
+                    ))
                 continue
+            # It's not a reply, so find for message handler
+            else:
+                if self.settings.get('Trace'):
+                    self.logger.debug('Received: {}'.format(
+                        json.dumps(msg, indent=4)
+                    ))
+                # Yes, a bit of magic here for easier use IMHO.
+                if hasattr(self, 'on_{}'.format(msg.get('Message'))):
+                    gevent.spawn(
+                        getattr(
+                            self, 'on_{}'.format(msg.get('Message'))), msg)
+                else:
+                    self.logger.error('Don\'t know how to handle message: {}'.format(
+                        json.dumps(msg, indent=4)))
+                    continue
 
 
     def handle_failure(self, msg):
@@ -257,10 +262,12 @@ class ZActor(object):
         pass
 
 
+
     def _remove_msg_headers(self, msg):
         res = msg.copy()
         for key in msg:
-            if key in ['Id', 'To', 'Received', 'From', 'Message', 'SendTime', 'Sequence']:
+            if key in ['Id', 'ReplyToId', 'To', 'Received', 'From', 'Message',
+                       'SendTime', 'Sequence']:
                 res.pop(key)
         return res
 
@@ -292,38 +299,34 @@ class ZActor(object):
             'SendTime': time.time(),
             'From': self.uid,
             'Timeout': timeout,
+            'ReplyTo': [self.uid]
         })
         if self.settings.get('Trace'):
             self.logger.debug('Asking: {}'.format(json.dumps(
                 msg, indent=4
             )))
-        try:
-            req_socket = self.context.socket(zmq.REQ)
-            req_socket.connect(self.settings.get('ReqAddr'))
-            req_socket.send_json(msg)
-            poll = zmq.Poller()
-            poll.register(req_socket, zmq.POLLIN)
-            socks = dict(poll.poll(timeout*1000))
-            if socks.get(req_socket) == zmq.POLLIN:
-                res = req_socket.recv_json()
-                return res
-            else:
-                self.logger.warning('No reply received for {}.'.format(json.dumps(msg,
-                                                                    indent=4)))
-                req_socket.setsockopt(zmq.LINGER, 0)
-                poll.unregister(req_socket)
-                req_socket.close()
-                # Re-Ask second time
-                if attempts > 1:
-                    self.logger.debug('Asking again.')
-                    attempts -= 1
-                    self.ask(msg, attempts=attempts)
-                else:
-                    self.logger.debug('Forgetting.')
-                    return {}
-        except Exception as e:
-            self.logger.error('[Ask] {}'.format(e))
-            raise
+        self.ask_pool[msg_id] = {}
+        self.ask_pool[msg_id] = {
+            'event': Event(),
+            'result': {},
+        }
+        self.pub_socket.send_json(msg)
+        if self.ask_pool[msg_id]['event'].wait(timeout=timeout):
+            # We got a reply
+            result = self.ask_pool[msg_id]['result']
+            del self.ask_pool[msg_id]
+            if self.settings.get('Trace'):
+                self.logger.debug('Reply received: {}'.format(
+                    json.dumps(result, indent=4)
+                ))
+            return result
+        else:
+            # No reply was received
+            self.logger.warning('No reply was received for {}'.format(
+                json.dumps(msg, indent=4)
+            ))
+            return {}
+
 
 
     def ping(self):
@@ -337,30 +340,21 @@ class ZActor(object):
             self.logger.info('Starting ping every {} seconds.'.format(ping_interval))
         gevent.sleep(2) # Give time for subscriber to setup
 
-
         def reconnect_pub_sub():
-            self.last_pub_sub_reconnect = time.time()
             self._disconnect_pub_socket()
             self._disconnect_sub_socket()
             self._connect_sub_socket()
             self._connect_pub_socket()
 
-
         while True:
-            # Check REQ socket and SUB sockets at once.
-            reply = self.ask({
-                'Message': 'Ping',
-                'To': self.uid,
-            })
-            if not reply:
-                self.logger.warning('Ping reply is not received.')
-            # Now check PUB socket
             ret = self.tell({
                 'Message': 'Ping',
                 'To': self.uid,
             })
             if not self.pong_event.wait(timeout=5):
                 # Timeout, no ping at all.
+                self.pong_event.clear()
+                self.last_pub_sub_reconnect = time.time()
                 reconnect_pub_sub()
                 self.logger.warning('PUB / SUB sockets reconnected.')
                 gevent.sleep(1)
@@ -388,7 +382,7 @@ class ZActor(object):
     def on_Ping(self, msg):
         From = msg.get('From') if msg.get('From') != self.uid else 'myself'
         self.logger.debug('Ping received from {}.'.format(From))
-        if not msg.get('ReplyRequest'):
+        if not msg.get('ReplyTo'):
             # Send Pong message only for tellers not askers.
             new_msg = {
                 'Message': 'Pong',
