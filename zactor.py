@@ -43,6 +43,7 @@ class ZActor(object):
     last_pub_sub_reconnect = None
     pub_socket = sub_socket = req_socket = None
 
+
     settings = {
         'UID': False,
         'SubAddr': 'tcp://127.0.0.1:8881',
@@ -64,12 +65,7 @@ class ZActor(object):
         # Find my UID
         uid = self.settings.get('UID')
         if uid:
-            try:
-                #int(uid) # Check that it is integer as zmq IDENTITY must be digits.
-                self.uid = str(uid)
-            except ValueError:
-                self.logger.error('UID must be integer, not using {}'.format(uid))
-                self.uid = str(uuid.getnode())
+            self.uid = str(uid)
         else:
             self.uid = str(uuid.getnode())
         self.logger.info('UID: {}.'.format(self.uid))
@@ -146,8 +142,8 @@ class ZActor(object):
             self.logger.warning('Did not import cached settings: {}'.format(e))
         # Open local settings and override settings.
         try:
-            local_settings = json.loads(open('settings.local').read())
-            self.settings.update(local_settings)
+            self.local_settings = json.loads(open('settings.local').read())
+            self.settings.update(self.local_settings)
             self.logger.info('Loaded settings.local.')
         except Exception as e:
             self.logger.warning('Cannot load settings.local: {}'.format(e))
@@ -172,10 +168,10 @@ class ZActor(object):
 
 
     def stop(self):
-        self.logger.debug('Stopping.')
-        self.sub_socket.close()
-        self.pub_socket.close()
-        sys.exit(0)
+        self.logger.info('Stopping...')
+        self._disconnect_req_socket()
+        self._disconnect_sub_socket()
+        self._disconnect_pub_socket()
 
 
     def spawn(self, func, *args, **kwargs):
@@ -287,7 +283,7 @@ class ZActor(object):
         return msg
 
 
-    def ask(self, msg, attempt=1):
+    def ask(self, msg, attempts=2, timeout=5):
         # This is used to send a message to the bus and wait for reply
         self.sent_message_count += 1
         msg_id = uuid.uuid4().hex
@@ -295,35 +291,39 @@ class ZActor(object):
             'Id': msg_id,
             'SendTime': time.time(),
             'From': self.uid,
+            'Timeout': timeout,
         })
         if self.settings.get('Trace'):
             self.logger.debug('Asking: {}'.format(json.dumps(
                 msg, indent=4
             )))
         try:
-            self.req_socket.send_json(msg)
+            req_socket = self.context.socket(zmq.REQ)
+            req_socket.connect(self.settings.get('ReqAddr'))
+            req_socket.send_json(msg)
             poll = zmq.Poller()
-            poll.register(self.req_socket, zmq.POLLIN)
-            socks = dict(poll.poll(5000))
-            if socks.get(self.req_socket) == zmq.POLLIN:
-                res = self.req_socket.recv_json()
+            poll.register(req_socket, zmq.POLLIN)
+            socks = dict(poll.poll(timeout*1000))
+            if socks.get(req_socket) == zmq.POLLIN:
+                res = req_socket.recv_json()
                 return res
             else:
                 self.logger.warning('No reply received for {}.'.format(json.dumps(msg,
                                                                     indent=4)))
-                self._disconnect_req_socket()
-                poll.unregister(self.req_socket)
-                self._connect_req_socket()
-                self.logger.info('Reconnected REQ socket.')
+                req_socket.setsockopt(zmq.LINGER, 0)
+                poll.unregister(req_socket)
+                req_socket.close()
                 # Re-Ask second time
-                if attempt < 2:
+                if attempts > 1:
                     self.logger.debug('Asking again.')
-                    self.ask(msg, attempt=2)
+                    attempts -= 1
+                    self.ask(msg, attempts=attempts)
                 else:
                     self.logger.debug('Forgetting.')
                     return {}
         except Exception as e:
             self.logger.error('[Ask] {}'.format(e))
+            raise
 
 
     def ping(self):
@@ -403,7 +403,6 @@ class ZActor(object):
         self.logger.debug('Pong received from {}.'.format(From))
         self.last_ping_id = msg.get('PingId')
         self.pong_event.set()
-
 
 
 

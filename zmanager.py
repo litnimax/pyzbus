@@ -22,13 +22,6 @@ MESSAGE_EXPIRE_TIME = 5 # Discard all messages older then 10 seconds
 logger = logging.getLogger(__name__)
 
 
-"""
-auth = Authenticator(context=context)
-auth.allow('192.168.1.1')
-auth.configure_plain('*', os.path.join(os.path.dirname(__file__), 'passwd'))
-auth.start()
-"""
-
 class ZManager(object):
 
     pub_socket = sub_socket = rep_socket = None
@@ -105,12 +98,13 @@ class ZManager(object):
                 logger.exception(e)
 
 
-    def rep_receive(self, timeout=5):
+    def rep_receive(self):
         logger.debug('Starting replier.')
         while True:
             try:
                 msg = self.rep_socket.recv_json()
                 msg_id = msg.get('Id')
+                timeout = int(msg.get('Timeout', 5))
                 if self.trace:
                     logger.debug('[REQUESTED] {}'.format(json.dumps(msg, indent=4)))
 
@@ -136,7 +130,7 @@ class ZManager(object):
 
             except Exception as e:
                 logger.exception(e)
-                
+
 
 
 
