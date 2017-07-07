@@ -159,6 +159,8 @@ class ZActor(object):
 
     def stop(self):
         self.logger.info('Stopping...')
+        sys.stdout.flush()
+        sys.stderr.flush()
         self._disconnect_sub_socket()
         self._disconnect_pub_socket()
 
@@ -298,7 +300,6 @@ class ZActor(object):
             'Id': msg_id,
             'SendTime': time.time(),
             'From': self.uid,
-            'Timeout': timeout,
             'ReplyTo': [self.uid]
         })
         if self.settings.get('Trace'):
