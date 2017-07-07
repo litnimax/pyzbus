@@ -40,7 +40,6 @@ class ZActor(object):
     sent_message_count = 0
     last_msg_time = time.time()
     last_msg_time_sum = 0
-    pong_event = Event()
     ask_pool = {} # Here we keep requests that we want replies
     last_pub_sub_reconnect = None
     pub_socket = sub_socket = None
@@ -50,7 +49,8 @@ class ZActor(object):
         'UID': False,
         'SubAddr': 'tcp://127.0.0.1:8881',
         'PubAddr': 'tcp://127.0.0.1:8882',
-        'PingInterval': 0,
+        'HeartbeatInterval': 0,
+        'HeartbeatTimeout': 5,
         'IdleTimeout': 200,
         'Trace': True,
         'Debug': True,
@@ -79,7 +79,7 @@ class ZActor(object):
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.check_idle))
         self.greenlets.append(gevent.spawn(self.receive))
-        self.greenlets.append(gevent.spawn(self.ping))
+        self.greenlets.append(gevent.spawn(self.heartbeat))
         # Install signal handler
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
@@ -333,15 +333,15 @@ class ZActor(object):
 
 
 
-    def ping(self):
+    def heartbeat(self):
         gevent.sleep(1) # Delay before 1-st ping, also allows
-        # PingInterval to be received from settings.
-        ping_interval = self.settings.get('PingInterval')
-        if not ping_interval:
-            self.logger.info('Ping disabled.')
+        # HeartbeatInterval to be received from settings.
+        heartbeat_interval = self.settings.get('HeartbeatInterval')
+        if not heartbeat_interval:
+            self.logger.info('Heartbeat disabled.')
             return
         else:
-            self.logger.info('Starting ping every {} seconds.'.format(ping_interval))
+            self.logger.info('Starting heartbeat every {} seconds.'.format(heartbeat_interval))
         gevent.sleep(2) # Give time for subscriber to setup
 
         def reconnect_pub_sub():
@@ -351,35 +351,17 @@ class ZActor(object):
             self._connect_pub_socket()
 
         while True:
-            ret = self.tell({
+            ret = self.ask({
                 'Message': 'Ping',
                 'To': self.uid,
-            })
-            if not self.pong_event.wait(timeout=5):
-                # Timeout, no ping at all.
-                self.pong_event.clear()
+            }, timeout=self.settings.get('HeartbeatTimeout'))
+            if not ret:
                 self.last_pub_sub_reconnect = time.time()
                 reconnect_pub_sub()
                 self.logger.warning('PUB / SUB sockets reconnected.')
                 gevent.sleep(1)
 
-            else:
-                # We got an on_Pong event
-                self.pong_event.clear()
-                if self.last_ping_id != ret.get('Id'):
-                    self.logger.warning('Last ping Id {} != {}!'.format(
-                        self.last_ping_id, ret.get('Id')
-                    ))
-                    reconnect_pub_sub()
-                    self.logger.warning('PUB / SUB sockets reconnected.')
-                    gevent.sleep(1)
-
-            gevent.sleep(ping_interval)
-
-
-    def watch(self, target):
-        # TODO: heartbeat targer
-        pass
+            gevent.sleep(heartbeat_interval)
 
 
     @check_reply
@@ -391,16 +373,16 @@ class ZActor(object):
             new_msg = {
                 'Message': 'Pong',
                 'To': msg.get('From'),
-                'PingId': msg.get('Id'),
             }
             self.tell(new_msg)
+        return {
+            'Version': self.version
+        }
 
 
     def on_Pong(self, msg):
         From = msg.get('From') if msg.get('From') != self.uid else 'myself'
         self.logger.debug('Pong received from {}.'.format(From))
-        self.last_ping_id = msg.get('PingId')
-        self.pong_event.set()
 
 
 
