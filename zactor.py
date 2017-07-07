@@ -113,11 +113,11 @@ class ZActor(object):
 
     def save_settings(self):
         try:
+            self.logger.debug('Saving settings.cache.')
             with open('settings.cache', 'w') as file:
                 file.write('{}\n'.format(
                     json.dumps(self.settings, indent=4)
                 ))
-            self.logger.debug('Saved settings.cache')
         except Exception as e:
             self.logger.error('Cannot save settings.cache: {}'.format(e))
 
@@ -157,12 +157,15 @@ class ZActor(object):
         return logger
 
 
-    def stop(self):
+    def stop(self, exit=True):
         self.logger.info('Stopping...')
+        self.save_settings()
         sys.stdout.flush()
         sys.stderr.flush()
         self._disconnect_sub_socket()
         self._disconnect_pub_socket()
+        if exit:
+            sys.exit(0)
 
 
     def spawn(self, func, *args, **kwargs):
