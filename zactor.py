@@ -33,6 +33,7 @@ def check_reply(func):
 
 
 class ZActor(object):
+    version = 1
     uid = None
     greenlets = []
 
@@ -58,6 +59,7 @@ class ZActor(object):
 
     def __init__(self, settings={}):
         self.logger = self.get_logger()
+        self.logger.info('Version: {}'.format(self.version))
         # Update startup settings
         self.load_settings(settings)
         # Adjust logger with new settings
@@ -373,10 +375,11 @@ class ZActor(object):
             new_msg = {
                 'Message': 'Pong',
                 'To': msg.get('From'),
+                'Version': self.version,
             }
             self.tell(new_msg)
         return {
-            'Version': self.version
+            'Version': self.version,
         }
 
 
