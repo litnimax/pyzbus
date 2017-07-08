@@ -55,13 +55,21 @@ class ZActor(object):
         'IdleTimeout': 200,
         'Trace': True,
         'Debug': True,
+        'RunMinimalMode': False,
     }
 
-    def __init__(self, settings={}):
+    def __init__(self, init_settings={}, override_settings={}):
         self.logger = self.get_logger()
         self.logger.info('Version: {}'.format(self.version))
         # Update startup settings
-        self.load_settings(settings)
+        self.settings = init_settings
+        # Load live settings from cache and local
+        self.load_settings()
+        # Now override if given
+        self.settings.update(override_settings)
+
+        if self.settings.get('RunMinimalMode'):
+            self.logger.info('Running minimal mode.')
         # Adjust logger with new settings
         self.logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
@@ -79,9 +87,10 @@ class ZActor(object):
         self._connect_pub_socket()
 
         # gevent.spawn Greenlets
-        self.greenlets.append(gevent.spawn(self.check_idle))
         self.greenlets.append(gevent.spawn(self.receive))
-        self.greenlets.append(gevent.spawn(self.heartbeat))
+        if not self.settings.get('RunMinimalMode'):
+            self.greenlets.append(gevent.spawn(self.check_idle))
+            self.greenlets.append(gevent.spawn(self.heartbeat))
         # Install signal handler
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
@@ -114,6 +123,9 @@ class ZActor(object):
         self.logger.debug('Disconnected SUB socket.')
 
     def save_settings(self):
+        if self.settings.get('RunMinimalMode'):
+            # Do not save settings.cache
+            return
         try:
             self.logger.debug('Saving settings.cache.')
             with open('settings.cache', 'w') as file:
@@ -124,8 +136,7 @@ class ZActor(object):
             self.logger.error('Cannot save settings.cache: {}'.format(e))
 
 
-    def load_settings(self, settings):
-        self.settings.update(settings)
+    def load_settings(self):
         try:
             settings_cache = json.loads(open('settings.cache').read())
             self.settings.update(settings_cache)
@@ -142,7 +153,7 @@ class ZActor(object):
 
 
     def apply_settings(self, new_settings):
-        self.logger.info('Apply settings not implemented')
+        self.logger.debug('Appling settings.')
 
 
     def get_logger(self):
@@ -262,11 +273,6 @@ class ZActor(object):
                     self.logger.error('Don\'t know how to handle message: {}'.format(
                         json.dumps(msg, indent=4)))
                     continue
-
-
-    def handle_failure(self, msg):
-        # TODO: When asked and got an error, send reply with error info.
-        pass
 
 
 
@@ -392,14 +398,14 @@ class ZActor(object):
     @check_reply
     def on_UpdateSettings(self, msg):
         s = self._remove_msg_headers(msg)
+        self.settings.update(s)
+        self.apply_settings(s)
+        self.save_settings()
         if self.settings.get('Trace'):
             self.logger.debug('[UpdateSettings] Received: {}'.format(
                 json.dumps(s, indent=4)))
         else:
             self.logger.info('Settings updated.')
-        self.settings.update(s)
-        self.apply_settings(s)
-        self.save_settings()
 
 
     def on_KeepAlive(self, msg):

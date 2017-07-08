@@ -36,9 +36,11 @@ class ZManager(object):
         self.context = zmq.Context()
         # Create publish socket
         self.pub_socket = self.context.socket(zmq.PUB)
+        self.pub_socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
         self.pub_socket.bind(pub_addr)
         # Subscribe socket for accepting messages
         self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
         self.sub_socket.subscribe(b'')
         self.sub_socket.bind(sub_addr)
         # Init greenlets
