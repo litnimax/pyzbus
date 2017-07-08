@@ -62,7 +62,7 @@ class ZActor(object):
         self.logger = self.get_logger()
         self.logger.info('Version: {}'.format(self.version))
         # Update startup settings
-        self.settings = init_settings
+        self.settings.update(init_settings)
         # Load live settings from cache and local
         self.load_settings()
         # Now override if given
