@@ -50,11 +50,11 @@ class ZActor(object):
         'UID': False,
         'SubAddr': 'tcp://127.0.0.1:8881',
         'PubAddr': 'tcp://127.0.0.1:8882',
-        'HeartbeatInterval': 0,
+        'HeartbeatInterval': 120,
         'HeartbeatTimeout': 5,
         'IdleTimeout': 200,
-        'Trace': True,
-        'Debug': True,
+        'Trace': False,
+        'Debug': False,
         'RunMinimalMode': False,
     }
 
