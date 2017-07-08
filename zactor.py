@@ -88,6 +88,7 @@ class ZActor(object):
 
         # gevent.spawn Greenlets
         self.greenlets.append(gevent.spawn(self.receive))
+        gevent.sleep(0.1) # Give receiver time to complete connection.
         if not self.settings.get('RunMinimalMode'):
             self.greenlets.append(gevent.spawn(self.check_idle))
             self.greenlets.append(gevent.spawn(self.heartbeat))
@@ -108,7 +109,8 @@ class ZActor(object):
         self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
         # Subscribe to messages for actor and also broadcasts
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
+        if not self.settings.get('RunMinimalMode'):
+            self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
         self.logger.debug('Connected SUB socket.')
 
 
