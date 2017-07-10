@@ -157,7 +157,8 @@ class ZActor(object):
 
     def load_settings(self):
         try:
-            if self.settings.get('CacheDir'):
+            if self.settings.get('CacheDir') and \
+                    not self.settings.get('RunMinimalMode'):
                 settings_cache = json.loads(
                     open(os.path.join(
                         self.settings.get('CacheDir'),
