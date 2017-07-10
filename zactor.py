@@ -4,13 +4,14 @@ from gevent.queue import Queue
 from gevent.event import Event
 import json
 import logging
-import setproctitle
+import os
 import signal
 import sys
 import time
 import uuid
 import zmq.green as zmq
 
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 # Decorators
 def check_reply(func):
@@ -33,7 +34,7 @@ def check_reply(func):
 
 
 class ZActor(object):
-    version = 1
+    version = 2
     uid = None
     greenlets = []
 
@@ -56,13 +57,25 @@ class ZActor(object):
         'Trace': False,
         'Debug': False,
         'RunMinimalMode': False,
+        'CacheDir': None, # Must be set for caching.
     }
 
     def __init__(self, init_settings={}, override_settings={}):
-        self.logger = self.get_logger()
-        self.logger.info('Version: {}'.format(self.version))
         # Update startup settings
         self.settings.update(init_settings)
+        #
+        self.logger = self.get_logger()
+        self.logger.info('Version: {}'.format(self.version))
+        # Create a cache dir if required
+        try:
+            if self.settings.get('CacheDir') and not os.path.exists(
+                    self.settings.get('CacheDir')):
+                self.logger.debug('Created cache dir.')
+                os.mkdir(self.settings.get('CacheDir'))
+        except Exception as e:
+            self.logger.error('Cannot create cache dir in {}! - {}'.format(
+                self.settings.get('CacheDir'), e
+            ))
         # Load live settings from cache and local
         self.load_settings()
         # Now override if given
@@ -129,20 +142,29 @@ class ZActor(object):
             # Do not save settings.cache
             return
         try:
-            self.logger.debug('Saving settings.cache.')
-            with open('settings.cache', 'w') as file:
-                file.write('{}\n'.format(
-                    json.dumps(self.settings, indent=4)
-                ))
+            if self.settings.get('CacheDir'):
+                self.logger.debug('Saving settings.cache.')
+                with open(
+                    os.path.join(self.settings.get('CacheDir'),
+                                'settings.cache'), 'w'
+                    ) as file:
+                    file.write('{}\n'.format(
+                        json.dumps(self.settings, indent=4)
+                    ))
         except Exception as e:
             self.logger.error('Cannot save settings.cache: {}'.format(e))
 
 
     def load_settings(self):
         try:
-            settings_cache = json.loads(open('settings.cache').read())
-            self.settings.update(settings_cache)
-            self.logger.info('Loaded settings.cache.')
+            if self.settings.get('CacheDir'):
+                settings_cache = json.loads(
+                    open(os.path.join(
+                        self.settings.get('CacheDir'),
+                        'settings.cache')
+                    ).read())
+                self.settings.update(settings_cache)
+                self.logger.info('Loaded settings.cache.')
         except Exception as e:
             self.logger.warning('Did not import cached settings: {}'.format(e))
         # Open local settings and override settings.
