@@ -272,7 +272,7 @@ class ZActor(object):
                         getattr(
                             self, 'on_{}'.format(msg.get('Message'))), msg)
                 else:
-                    self.logger.error('Don\'t know how to handle message: {}'.format(
+                    self.logger.debug('Don\'t know how to handle message: {}'.format(
                         json.dumps(msg, indent=4)))
                     continue
 
@@ -336,7 +336,7 @@ class ZActor(object):
             return result
         else:
             # No reply was received
-            self.logger.warning('No reply was received for {}'.format(
+            self.logger.debug('No reply was received for {}'.format(
                 json.dumps(msg, indent=4)
             ))
             return {}
