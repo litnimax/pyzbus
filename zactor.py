@@ -254,10 +254,27 @@ class ZActor(object):
         while True:
             try:
                 header, msg = self.sub_socket.recv_multipart()
+                # Update counters
+                self.receive_message_count +1
+                self.last_msg_time = time.time()
+                self.last_msg_time_sum = 0
+
+                msg = json.loads(msg)
+                msg.update({'Received': time.time()})
+
                 if self.settings.get('Trace'):
                     logger.debug('Received: {}'.format(
                         json.dumps(msg, indent=4)
                     ))
+
+                # Check expiration
+                time_diff = time.time() - int(msg.get('SendTime', 0))
+                if time_diff > self.settings.get('MessageExpireTime'):
+                    logger.warning(
+                        'Discarding expired ({} seconds) message {}.'.format(
+                            time_diff, msg))
+                    continue
+
             except zmq.ZMQError as e:
                 # This can be error due to ping() closing SUB socket.
                 if self.last_pub_sub_reconnect - time.time() > 1:
@@ -266,20 +283,12 @@ class ZActor(object):
                     logger.warning('SUB socket error: {}'.format(e))
                 continue
 
-            # Check expiration
-            time_diff = time.time() - msg.get('SendTime', 0)
-            if time_diff > self.settings.get('MessageExpireTime'):
-                logger.warning(
-                    'Discarding expired ({} seconds) message {}.'.format(
-                        time_diff, msg))
+            except Exception as e:
+                if self.settings.get('Debug'):
+                    logger.exception(e)
+                else:
+                    error('Receive error: {}'.format(e))
                 continue
-
-            # Update counters
-            self.receive_message_count +1
-            self.last_msg_time = time.time()
-            self.last_msg_time_sum = 0
-            msg = json.loads(msg)
-            msg.update({'Received': time.time()})
 
             # Check if it is a reply
             reply_to_id = msg.get('ReplyToId')
