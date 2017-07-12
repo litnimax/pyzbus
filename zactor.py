@@ -64,10 +64,17 @@ class ZActor(object):
     }
 
     def __init__(self, *args, **kwargs):
+        # Load local settings.
+        self.load_settings()
+        # Override local settings if given
         if kwargs.get('settings'):
             self.settings.update(kwargs.get('settings'))
+
+        # Adjust logger
+        logger.setLevel(level=logging.DEBUG if self.settings.get(
+            'Debug') else logging.INFO)
+
         logger.info('Version: {}'.format(self.version))
-        self.load_settings()
         if self.settings.get('RunMinimalMode'):
             logger.info('Running minimal mode.')
 
@@ -76,10 +83,6 @@ class ZActor(object):
                 self.settings.get('CacheDir')):
             os.mkdir(self.settings.get('CacheDir'))
             logger.debug('Created cache dir.')
-
-        # Adjust logger with new settings
-        logger.setLevel(level=logging.DEBUG if self.settings.get(
-            'Debug') else logging.INFO)
 
         # Find my UID
         uid = self.settings.get('UID')
@@ -94,9 +97,10 @@ class ZActor(object):
         self._connect_sub_socket()
         self._connect_pub_socket()
 
-        # gevent.spawn Greenlets
+        # Spawn receive loop
         self.greenlets.append(gevent.spawn(self.receive))
-        gevent.sleep(0.1) # Give receiver time to complete connection.
+        gevent.sleep(0.5) # Give receiver time to complete connection.
+
         if not self.settings.get('RunMinimalMode'):
             self.greenlets.append(gevent.spawn(self.check_idle))
             self.greenlets.append(gevent.spawn(self.heartbeat))
@@ -133,6 +137,7 @@ class ZActor(object):
         self.sub_socket.setsockopt(zmq.LINGER, 0)
         self.sub_socket.close()
         logger.debug('Disconnected SUB socket.')
+
 
     def save_settings(self):
         if self.settings.get('RunMinimalMode'):
@@ -209,7 +214,7 @@ class ZActor(object):
 
 
     def run(self):
-        logger.info('Started actor with uid {}.'.format(self.uid))
+        logger.info('Running actor with UID {}.'.format(self.uid))
         gevent.joinall(self.greenlets)
 
 
