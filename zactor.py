@@ -2,6 +2,7 @@ import gevent
 from gevent.monkey import patch_all; patch_all()
 from gevent.queue import Queue
 from gevent.event import Event
+from datetime import datetime
 import json
 import logging
 import os
@@ -55,7 +56,7 @@ class ZActor(object):
         'PubAddr': 'tcp://127.0.0.1:8882',
         'HeartbeatInterval': 120,
         'HeartbeatTimeout': 5,
-        'IdleTimeout': 200,
+        'IdleTimeout': 180,
         'Trace': False,
         'Debug': False,
         'RunMinimalMode': False,
@@ -70,9 +71,16 @@ class ZActor(object):
         if self.settings.get('RunMinimalMode'):
             logger.info('Running minimal mode.')
 
+        # Create cache dir if required.
+        if self.settings.get('CacheDir') and not os.path.exists(
+                self.settings.get('CacheDir')):
+            os.mkdir(self.settings.get('CacheDir'))
+            logger.debug('Created cache dir.')
+
         # Adjust logger with new settings
         logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
+
         # Find my UID
         uid = self.settings.get('UID')
         if uid:
@@ -99,12 +107,14 @@ class ZActor(object):
 
     def _connect_pub_socket(self):
         self.pub_socket = self.context.socket(zmq.PUB)
+        self.pub_socket.setsockopt(zmq.RECONNECT_IVL, 1000)
         self.pub_socket.connect(self.settings.get('PubAddr'))
         self.pub_socket.setsockopt(zmq.IDENTITY, self.uid)
         logger.debug('Connected PUB socket.')
 
     def _connect_sub_socket(self):
         self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.setsockopt(zmq.RECONNECT_IVL, 1000)
         self.sub_socket.connect(self.settings.get('SubAddr'))
         self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
         # Subscribe to messages for actor and also broadcasts
@@ -129,12 +139,6 @@ class ZActor(object):
             # Do not save settings.cache
             return
         try:
-            # Create cache dir if required.
-            if self.settings.get('CacheDir') and not os.path.exists(
-                    self.settings.get('CacheDir')):
-                os.mkdir(self.settings.get('CacheDir'))
-                logger.debug('Created cache dir.')
-
             if self.settings.get('CacheDir'):
                 logger.debug('Saving settings.cache.')
                 with open(
@@ -308,6 +312,8 @@ class ZActor(object):
             'SendTime': time.time(),
             'From': self.uid,
             'Sequence': self.sent_message_count,
+            'SendTimeHuman': datetime.strftime(datetime.now(),
+                                               '%Y-%m-%d %H:%M:%S')
         })
         if self.settings.get('Trace'):
             logger.debug('Telling: {}'.format(json.dumps(
@@ -325,7 +331,9 @@ class ZActor(object):
             'Id': msg_id,
             'SendTime': time.time(),
             'From': self.uid,
-            'ReplyTo': [self.uid]
+            'ReplyTo': [self.uid],
+            'SendTimeHuman': datetime.strftime(datetime.now(),
+                                               '%Y-%m-%d %H:%M:%S')
         })
         if self.settings.get('Trace'):
             logger.debug('Asking: {}'.format(json.dumps(

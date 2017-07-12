@@ -26,7 +26,7 @@ class ZManager(object):
     pub_socket = sub_socket = None
     greenlets = []
 
-    def __init__(self, keepalive=120, sub_addr=SUB_ADDR, pub_addr=PUB_ADDR,
+    def __init__(self, keepalive=170, sub_addr=SUB_ADDR, pub_addr=PUB_ADDR,
                  debug=False, trace=False):
         self.keepalive = keepalive
         self.trace = trace
