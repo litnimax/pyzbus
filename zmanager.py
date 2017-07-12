@@ -68,7 +68,7 @@ class ZManager(object):
                 # Check expiration
                 time_diff = time.time() - msg.get('SendTime', 0)
                 if time_diff > MESSAGE_EXPIRE_TIME:
-                    logger.info(
+                    logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
                             time_diff, msg))
                     continue

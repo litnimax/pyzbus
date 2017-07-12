@@ -61,6 +61,7 @@ class ZActor(object):
         'Debug': False,
         'RunMinimalMode': False,
         'CacheDir': None, # Must be set for caching.
+        'MessageExpireTime': 5, # seconds
     }
 
     def __init__(self, *args, **kwargs):
@@ -253,12 +254,24 @@ class ZActor(object):
         while True:
             try:
                 header, msg = self.sub_socket.recv_multipart()
+                if self.settings.get('Trace'):
+                    logger.debug('Received: {}'.format(
+                        json.dumps(msg, indent=4)
+                    ))
             except zmq.ZMQError as e:
                 # This can be error due to ping() closing SUB socket.
                 if self.last_pub_sub_reconnect - time.time() > 1:
                     self._disconnect_sub_socket()
                     self._connect_sub_socket()
                     logger.warning('SUB socket error: {}'.format(e))
+                continue
+
+            # Check expiration
+            time_diff = time.time() - msg.get('SendTime', 0)
+            if time_diff > self.settings.get('MessageExpireTime'):
+                logger.warning(
+                    'Discarding expired ({} seconds) message {}.'.format(
+                        time_diff, msg))
                 continue
 
             # Update counters
@@ -283,10 +296,6 @@ class ZActor(object):
                 continue
             # It's not a reply, so find for message handler
             else:
-                if self.settings.get('Trace'):
-                    logger.debug('Received: {}'.format(
-                        json.dumps(msg, indent=4)
-                    ))
                 # Yes, a bit of magic here for easier use IMHO.
                 if hasattr(self, 'on_{}'.format(msg.get('Message'))):
                     gevent.spawn(
