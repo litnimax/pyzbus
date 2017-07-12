@@ -13,6 +13,8 @@ import zmq.green as zmq
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
+logger = logging.getLogger(__name__)
+
 # Decorators
 def check_reply(func):
     def wrapper(agent, msg, *args, **kwargs):
@@ -60,31 +62,16 @@ class ZActor(object):
         'CacheDir': None, # Must be set for caching.
     }
 
-    def __init__(self, init_settings={}, override_settings={}):
-        # Update startup settings
-        self.settings.update(init_settings)
-        #
-        self.logger = self.get_logger()
-        self.logger.info('Version: {}'.format(self.version))
-        # Create a cache dir if required
-        try:
-            if self.settings.get('CacheDir') and not os.path.exists(
-                    self.settings.get('CacheDir')):
-                self.logger.debug('Created cache dir.')
-                os.mkdir(self.settings.get('CacheDir'))
-        except Exception as e:
-            self.logger.error('Cannot create cache dir in {}! - {}'.format(
-                self.settings.get('CacheDir'), e
-            ))
-        # Load live settings from cache and local
+    def __init__(self, *args, **kwargs):
+        if kwargs.get('settings'):
+            self.settings.update(kwargs.get('settings'))
+        logger.info('Version: {}'.format(self.version))
         self.load_settings()
-        # Now override if given
-        self.settings.update(override_settings)
-
         if self.settings.get('RunMinimalMode'):
-            self.logger.info('Running minimal mode.')
+            logger.info('Running minimal mode.')
+
         # Adjust logger with new settings
-        self.logger.setLevel(level=logging.DEBUG if self.settings.get(
+        logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
         # Find my UID
         uid = self.settings.get('UID')
@@ -92,7 +79,7 @@ class ZActor(object):
             self.uid = str(uid)
         else:
             self.uid = str(uuid.getnode())
-        self.logger.info('UID: {}.'.format(self.uid))
+        logger.info('UID: {}.'.format(self.uid))
 
         self.context = zmq.Context()
         self.last_pub_sub_reconnect = time.time()
@@ -114,7 +101,7 @@ class ZActor(object):
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.connect(self.settings.get('PubAddr'))
         self.pub_socket.setsockopt(zmq.IDENTITY, self.uid)
-        self.logger.debug('Connected PUB socket.')
+        logger.debug('Connected PUB socket.')
 
     def _connect_sub_socket(self):
         self.sub_socket = self.context.socket(zmq.SUB)
@@ -124,26 +111,32 @@ class ZActor(object):
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
         if not self.settings.get('RunMinimalMode'):
             self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
-        self.logger.debug('Connected SUB socket.')
+        logger.debug('Connected SUB socket.')
 
 
     def _disconnect_pub_socket(self):
         self.pub_socket.setsockopt(zmq.LINGER, 0)
         self.pub_socket.close()
-        self.logger.debug('Disconnected PUB socket.')
+        logger.debug('Disconnected PUB socket.')
 
     def _disconnect_sub_socket(self):
         self.sub_socket.setsockopt(zmq.LINGER, 0)
         self.sub_socket.close()
-        self.logger.debug('Disconnected SUB socket.')
+        logger.debug('Disconnected SUB socket.')
 
     def save_settings(self):
         if self.settings.get('RunMinimalMode'):
             # Do not save settings.cache
             return
         try:
+            # Create cache dir if required.
+            if self.settings.get('CacheDir') and not os.path.exists(
+                    self.settings.get('CacheDir')):
+                os.mkdir(self.settings.get('CacheDir'))
+                logger.debug('Created cache dir.')
+
             if self.settings.get('CacheDir'):
-                self.logger.debug('Saving settings.cache.')
+                logger.debug('Saving settings.cache.')
                 with open(
                     os.path.join(self.settings.get('CacheDir'),
                                 'settings.cache'), 'w'
@@ -152,7 +145,7 @@ class ZActor(object):
                         json.dumps(self.settings, indent=4)
                     ))
         except Exception as e:
-            self.logger.error('Cannot save settings.cache: {}'.format(e))
+            logger.error('Cannot save settings.cache: {}'.format(e))
 
 
     def load_settings(self):
@@ -165,38 +158,29 @@ class ZActor(object):
                         'settings.cache')
                     ).read())
                 self.settings.update(settings_cache)
-                self.logger.info('Loaded settings.cache.')
+                logger.debug('Loaded settings.cache.')
         except Exception as e:
-            self.logger.warning('Did not import cached settings: {}'.format(e))
+            logger.debug('Did not import cached settings: {}'.format(e))
         # Open local settings and override settings.
         try:
             self.local_settings = json.loads(open('settings.local').read())
             self.settings.update(self.local_settings)
-            self.logger.info('Loaded settings.local.')
+            logger.debug('Loaded settings.local.')
         except Exception as e:
-            self.logger.warning('Cannot load settings.local: {}'.format(e))
+            logger.warning('Cannot load settings.local: {}'.format(e))
 
 
     def apply_settings(self, new_settings):
-        self.logger.debug('Appling settings.')
-
-
-    def get_logger(self):
-        logger = logging.getLogger(__name__)
-        logger.propagate = 0
-        logger.setLevel(level=logging.DEBUG if self.settings.get(
-            'Debug') else logging.INFO)
-        ch = logging.StreamHandler()
-        ch.setLevel(level=logging.DEBUG if self.settings.get(
-            'Debug') else logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-        ch.setFormatter(formatter)
-        logger.addHandler(ch)
-        return logger
+        logger.debug('Appling settings.')
+        # Adjust debug levels
+        new_debug = new_settings.get('Debug')
+        if new_debug:
+            logger.info('Changing Debug to {}'.format(new_debug))
+            logger.setLevel(level=logging.DEBUG if new_debug else logging.INFO)
 
 
     def stop(self, exit=True):
-        self.logger.info('Stopping...')
+        logger.info('Stopping...')
         self.save_settings()
         sys.stdout.flush()
         sys.stderr.flush()
@@ -210,18 +194,18 @@ class ZActor(object):
         try:
             self.greenlets.append(gevent.spawn(func, *args, **kwargs))
         except Exception as e:
-            self.logger.exception(repr(e))
+            logger.exception(repr(e))
 
     def spawn_later(self, delay, func, *args, **kwargs):
         try:
             self.greenlets.append(gevent.spawn_later(delay, func, *args, **kwargs))
         except Exception as e:
-            self.logger.exception(repr(e))
+            logger.exception(repr(e))
 
 
 
     def run(self):
-        self.logger.info('Started actor with uid {}.'.format(self.uid))
+        logger.info('Started actor with uid {}.'.format(self.uid))
         gevent.joinall(self.greenlets)
 
 
@@ -229,15 +213,15 @@ class ZActor(object):
     def check_idle(self):
         idle_timeout = self.settings.get('IdleTimeout')
         if not idle_timeout:
-            self.logger.info('Idle timeout watchdog disabled.')
+            logger.debug('Idle timeout watchdog disabled.')
             return
-        self.logger.info('Idle timeout watchdog started.')
+        logger.debug('Idle timeout watchdog started.')
         while True:
             # Check when we last a message.
             now = time.time()
             if now - self.last_msg_time > idle_timeout:
                 self.last_msg_time_sum += idle_timeout
-                self.logger.warning(
+                logger.warning(
                     'Idle timeout! No messages for last {} seconds.'.format(
                                                         self.last_msg_time_sum))
             gevent.sleep(idle_timeout)
@@ -245,13 +229,18 @@ class ZActor(object):
 
     def subscribe(self, s):
         # Add additional subscriptions here.
-        self.logger.debug('Subscribed for {}.'.format(s))
+        logger.info('Subscribed for {}.'.format(s))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(s))
+
+    def unsubscribe(self, s):
+        # Add additional subscriptions here.
+        logger.info('Unsubscribed from {}.'.format(s))
+        self.sub_socket.setsockopt(zmq.UNSUBSCRIBE, b'|{}|'.format(s))
 
 
     def receive(self):
         # Actor sibscription receive loop
-        self.logger.debug('Receiver has been started.')
+        logger.debug('Receiver has been started.')
         while True:
             try:
                 header, msg = self.sub_socket.recv_multipart()
@@ -260,7 +249,7 @@ class ZActor(object):
                 if self.last_pub_sub_reconnect - time.time() > 1:
                     self._disconnect_sub_socket()
                     self._connect_sub_socket()
-                    self.logger.warning('SUB socket error: {}'.format(e))
+                    logger.warning('SUB socket error: {}'.format(e))
                 continue
 
             # Update counters
@@ -279,14 +268,14 @@ class ZActor(object):
                         'result'] = msg
                     self.ask_pool[reply_to_id]['event'].set()
                 else:
-                    self.logger.error('Got an unexpected reply: {}'.format(
+                    logger.error('Got an unexpected reply: {}'.format(
                         json.dumps(msg, indent=4)
                     ))
                 continue
             # It's not a reply, so find for message handler
             else:
                 if self.settings.get('Trace'):
-                    self.logger.debug('Received: {}'.format(
+                    logger.debug('Received: {}'.format(
                         json.dumps(msg, indent=4)
                     ))
                 # Yes, a bit of magic here for easier use IMHO.
@@ -295,7 +284,7 @@ class ZActor(object):
                         getattr(
                             self, 'on_{}'.format(msg.get('Message'))), msg)
                 else:
-                    self.logger.debug('Don\'t know how to handle message: {}'.format(
+                    logger.debug('Don\'t know how to handle message: {}'.format(
                         json.dumps(msg, indent=4)))
                     continue
 
@@ -321,7 +310,7 @@ class ZActor(object):
             'Sequence': self.sent_message_count,
         })
         if self.settings.get('Trace'):
-            self.logger.debug('Telling: {}'.format(json.dumps(
+            logger.debug('Telling: {}'.format(json.dumps(
                 msg, indent=4
             )))
         self.pub_socket.send_json(msg)
@@ -339,7 +328,7 @@ class ZActor(object):
             'ReplyTo': [self.uid]
         })
         if self.settings.get('Trace'):
-            self.logger.debug('Asking: {}'.format(json.dumps(
+            logger.debug('Asking: {}'.format(json.dumps(
                 msg, indent=4
             )))
         self.ask_pool[msg_id] = {}
@@ -353,13 +342,13 @@ class ZActor(object):
             result = self.ask_pool[msg_id]['result']
             del self.ask_pool[msg_id]
             if self.settings.get('Trace'):
-                self.logger.debug('Reply received: {}'.format(
+                logger.debug('Reply received: {}'.format(
                     json.dumps(result, indent=4)
                 ))
             return result
         else:
             # No reply was received
-            self.logger.debug('No reply was received for {}'.format(
+            logger.debug('No reply was received for {}'.format(
                 json.dumps(msg, indent=4)
             ))
             return {}
@@ -371,10 +360,10 @@ class ZActor(object):
         # HeartbeatInterval to be received from settings.
         heartbeat_interval = self.settings.get('HeartbeatInterval')
         if not heartbeat_interval:
-            self.logger.info('Heartbeat disabled.')
+            logger.info('Heartbeat disabled.')
             return
         else:
-            self.logger.info('Starting heartbeat every {} seconds.'.format(heartbeat_interval))
+            logger.debug('Starting heartbeat every {} seconds.'.format(heartbeat_interval))
         gevent.sleep(2) # Give time for subscriber to setup
 
         def reconnect_pub_sub():
@@ -391,7 +380,7 @@ class ZActor(object):
             if not ret:
                 self.last_pub_sub_reconnect = time.time()
                 reconnect_pub_sub()
-                self.logger.warning('PUB / SUB sockets reconnected.')
+                logger.warning('PUB / SUB sockets reconnected.')
                 gevent.sleep(1)
 
             gevent.sleep(heartbeat_interval)
@@ -400,7 +389,7 @@ class ZActor(object):
     @check_reply
     def on_Ping(self, msg):
         From = msg.get('From') if msg.get('From') != self.uid else 'myself'
-        self.logger.debug('Ping received from {}.'.format(From))
+        logger.debug('Ping received from {}.'.format(From))
         if not msg.get('ReplyTo'):
             # Send Pong message only for tellers not askers.
             new_msg = {
@@ -416,25 +405,25 @@ class ZActor(object):
 
     def on_Pong(self, msg):
         From = msg.get('From') if msg.get('From') != self.uid else 'myself'
-        self.logger.debug('Pong received from {}.'.format(From))
+        logger.debug('Pong received from {}.'.format(From))
 
 
 
     @check_reply
     def on_UpdateSettings(self, msg):
         s = self._remove_msg_headers(msg)
-        self.settings.update(s)
         self.apply_settings(s)
+        self.settings.update(s)
         self.save_settings()
         if self.settings.get('Trace'):
-            self.logger.debug('[UpdateSettings] Received: {}'.format(
+            logger.debug('[UpdateSettings] Received: {}'.format(
                 json.dumps(s, indent=4)))
         else:
-            self.logger.info('Settings updated.')
+            logger.info('Settings updated.')
 
 
     def on_KeepAlive(self, msg):
-        self.logger.debug('KeepAlive received.')
+        logger.debug('KeepAlive received.')
 
 
     # TODO: Ideas
