@@ -272,7 +272,7 @@ class ZActor(object):
                 if time_diff > self.settings.get('MessageExpireTime'):
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
-                            time_diff, msg))
+                            time_diff, json.dumps(msg, indent=4)))
                     continue
 
             except zmq.ZMQError as e:

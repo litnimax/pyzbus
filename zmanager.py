@@ -70,7 +70,7 @@ class ZManager(object):
                 if time_diff > MESSAGE_EXPIRE_TIME:
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
-                            time_diff, msg))
+                            time_diff, json.dumps(msg, ident=4)))
                     continue
 
                 self.pub_socket.send_multipart(['|{}|'.format(msg.get('To')),
