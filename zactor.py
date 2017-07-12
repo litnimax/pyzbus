@@ -268,7 +268,7 @@ class ZActor(object):
                     ))
 
                 # Check expiration
-                time_diff = time.time() - int(msg.get('SendTime', 0))
+                time_diff = abs(time.time() - int(msg.get('SendTime', 0)))
                 if time_diff > self.settings.get('MessageExpireTime'):
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
