@@ -62,6 +62,7 @@ class ZActor(object):
         'RunMinimalMode': False,
         'CacheDir': None, # Must be set for caching.
         'MessageExpireTime': 5, # seconds
+        'AskTimeout': 5,
     }
 
     def __init__(self, *args, **kwargs):
@@ -347,8 +348,10 @@ class ZActor(object):
         return msg
 
 
-    def ask(self, msg, attempts=2, timeout=50):
+    def ask(self, msg, attempts=2, timeout=None):
         # This is used to send a message to the bus and wait for reply
+        if not timeout:
+            timeout = self.settings.get('AskTimeout')
         self.sent_message_count += 1
         msg_id = uuid.uuid4().hex
         msg.update({
