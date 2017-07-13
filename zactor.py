@@ -269,6 +269,7 @@ class ZActor(object):
 
                 # Check expiration
                 time_diff = abs(time.time() - int(msg.get('SendTime', 0)))
+                logger.debug('Time difference: {}'.format(time_diff))
                 if time_diff > self.settings.get('MessageExpireTime'):
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
@@ -346,7 +347,7 @@ class ZActor(object):
         return msg
 
 
-    def ask(self, msg, attempts=2, timeout=5):
+    def ask(self, msg, attempts=2, timeout=50):
         # This is used to send a message to the bus and wait for reply
         self.sent_message_count += 1
         msg_id = uuid.uuid4().hex

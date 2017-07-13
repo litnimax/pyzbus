@@ -4,6 +4,7 @@ import gevent
 from gevent.monkey import patch_all; patch_all()
 from gevent import wsgi, spawn, joinall
 from gevent.event import Event
+from datetime import datetime
 import json
 import logging
 import os
@@ -67,6 +68,7 @@ class ZManager(object):
                             json.dumps(msg, indent=4)))
                 # Check expiration
                 time_diff = abs(time.time() - msg.get('SendTime', 0))
+                logger.debug('Time difference: {}'.format(time_diff))
                 if time_diff > MESSAGE_EXPIRE_TIME:
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
@@ -88,6 +90,11 @@ class ZManager(object):
         logger.info('Starting publish keepalive with rate {}.'.format(self.keepalive))
         while True:
             logger.debug('Publishing keepalive.')
-            msg = {'Message': 'KeepAlive'}
+            msg = {
+                'Message': 'KeepAlive',
+                'SendTime': time.time(),
+                'SendTimeHuman': datetime.strftime(datetime.now(),
+                                                   '%Y-%m-%d %H:%M:%S')
+            }
             self.pub_socket.send_multipart(['|*|', json.dumps(msg)])
             gevent.sleep(self.keepalive)
