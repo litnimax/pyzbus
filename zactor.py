@@ -447,7 +447,8 @@ class ZActor(object):
     @check_reply
     def on_UpdateSettings(self, msg):
         s = self._remove_msg_headers(msg)
-        self.apply_settings(s)
+        self.apply_settings(s) # Don't change the order! We need to understand
+        # old and new settings.
         self.settings.update(s)
         self.save_settings()
         if self.settings.get('Trace'):

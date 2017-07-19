@@ -12,44 +12,48 @@ import setproctitle
 import sys
 import time
 import zmq.green as zmq
-#from zmq.auth import Authenticator
 
-PUB_ADDR = 'tcp://127.0.0.1:8881' # Sending messages to agents
-SUB_ADDR = 'tcp://127.0.0.1:8882' # Collecting agent messages
-
-MESSAGE_EXPIRE_TIME = 5 # Discard all messages older then 10 seconds
 
 logger = logging.getLogger(__name__)
 
 
 class ZManager(object):
 
+    settings = {
+        'PubAddr': 'tcp://127.0.0.1:8881', # Sending messages to agents
+        'SubAddr': 'tcp://127.0.0.1:8882', # Collecting agent messages
+        'MessageExpireTime': 5, # Discard all messages older then 10 seconds
+        'Trace': False,
+        'Debug': False,
+        'KeepAlive': 170,
+        'LocalSettingsFile': None,
+    }
+
     pub_socket = sub_socket = None
     greenlets = []
 
-    def __init__(self, keepalive=170, sub_addr=SUB_ADDR, pub_addr=PUB_ADDR,
-                 debug=False, trace=False):
-        self.keepalive = keepalive
-        self.trace = trace
-        if debug:
-            self.debug = True
-            logger.setLevel(logging.DEBUG)
+    def __init__(self, settings={}):
+        self.settings.update(settings)
+        self.load_settings()
+        logger.setLevel(
+            logging.DEBUG if self.settings.get('Debug') else logging.INFO)
         self.context = zmq.Context()
         # Create publish socket
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
-        self.pub_socket.bind(pub_addr)
+        self.pub_socket.bind(self.settings.get('PubAddr'))
         # Subscribe socket for accepting messages
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
         self.sub_socket.subscribe(b'')
-        self.sub_socket.bind(sub_addr)
+        self.sub_socket.bind(self.settings.get('SubAddr'))
         # Init greenlets
-        self.greenlets.append(spawn(self.do_keepalive))
+        self.greenlets.append(spawn(self.do_KeepAlive))
         self.greenlets.append(spawn(self.sub_receive))
 
 
     def run(self):
+        logger.info('ZManager has been started.')
         joinall(self.greenlets)
 
 
@@ -59,7 +63,7 @@ class ZManager(object):
         while True:
             try:
                 msg = self.sub_socket.recv_json()
-                if self.trace:
+                if self.settings.get('Trace'):
                     if msg.get('ReplyToId'):
                         logger.debug('[REPLIED] {}'.format(
                             json.dumps(msg, indent=4)))
@@ -69,10 +73,10 @@ class ZManager(object):
                 # Check expiration
                 time_diff = abs(time.time() - msg.get('SendTime', 0))
                 logger.debug('Time difference: {}'.format(time_diff))
-                if time_diff > MESSAGE_EXPIRE_TIME:
+                if time_diff > int(self.settings.get('MessageExpireTime')):
                     logger.warning(
                         'Discarding expired ({} seconds) message {}.'.format(
-                            time_diff, json.dumps(msg, ident=4)))
+                            time_diff, json.dumps(msg, indent=4)))
                     continue
 
                 self.pub_socket.send_multipart(['|{}|'.format(msg.get('To')),
@@ -82,14 +86,15 @@ class ZManager(object):
                 logger.exception(e)
 
 
-    def do_keepalive(self):
+    def do_KeepAlive(self):
         # Periodic keep alive message to all connected actors
-        if not self.keepalive:
+        if not self.settings.get('KeepAlive'):
             logger.info('KeepAlive disabled.')
             return
-        logger.info('Starting publish keepalive with rate {}.'.format(self.keepalive))
+        logger.info('Starting publishing KeepAlive messages with rate {}.'.format(
+            self.settings.get('KeepAlive')))
         while True:
-            logger.debug('Publishing keepalive.')
+            logger.debug('Publishing KeepAlive.')
             msg = {
                 'Message': 'KeepAlive',
                 'SendTime': time.time(),
@@ -97,4 +102,17 @@ class ZManager(object):
                                                    '%Y-%m-%d %H:%M:%S')
             }
             self.pub_socket.send_multipart(['|*|', json.dumps(msg)])
-            gevent.sleep(self.keepalive)
+            gevent.sleep(self.settings.get('KeepAlive'))
+
+
+    def load_settings(self):
+        if not self.settings.get('LocalSettingsFile'):
+            logger.info('LocalSettingsFile not set, local settings not loaded.')
+            return
+        try:
+            self.local_settings = json.loads(
+                open(self.settings.get('LocalSettingsFile')).read())
+            self.settings.update(self.local_settings)
+            logger.debug('Loaded settings.local.')
+        except Exception as e:
+            logger.warning('Cannot load settings.local: {}'.format(e))
