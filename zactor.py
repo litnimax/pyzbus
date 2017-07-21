@@ -269,12 +269,19 @@ class ZActor(object):
                     ))
 
                 # Check expiration
-                time_diff = abs(time.time() - int(msg.get('SendTime', 0)))
+                time_diff = abs(time.time() - float(msg.get('SendTime', 0)))
                 logger.debug('Time difference: {}'.format(time_diff))
-                if time_diff > self.settings.get('MessageExpireTime'):
+                exp_time = float(self.settings.get('MessageExpireTime'))
+                if time_diff >= exp_time and time_diff <= exp_time + 1:
+                    # Give a WARNING on 1 second before discard
                     logger.warning(
+                        'Nearly expired ({} seconds) message {}.'.format(
+                            time_diff, json.dumps(msg, indent=4)))
+                elif time_diff > time_diff + 1:
+                    logger.error(
                         'Discarding expired ({} seconds) message {}.'.format(
                             time_diff, json.dumps(msg, indent=4)))
+                    # Next message please...
                     continue
 
             except zmq.ZMQError as e:
