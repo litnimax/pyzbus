@@ -272,12 +272,13 @@ class ZActor(object):
                 time_diff = abs(time.time() - float(msg.get('SendTime', 0)))
                 logger.debug('Time difference: {}'.format(time_diff))
                 exp_time = float(self.settings.get('MessageExpireTime'))
-                if time_diff >= exp_time and time_diff <= exp_time + 1:
+                threashold = 1
+                if time_diff >= exp_time and time_diff <= exp_time + threashold:
                     # Give a WARNING on 1 second before discard
                     logger.warning(
                         'Nearly expired ({} seconds) message {}.'.format(
                             time_diff, json.dumps(msg, indent=4)))
-                elif time_diff > time_diff + 1:
+                elif time_diff > exp_time + threashold:
                     logger.error(
                         'Discarding expired ({} seconds) message {}.'.format(
                             time_diff, json.dumps(msg, indent=4)))
