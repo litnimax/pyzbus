@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -63,6 +64,7 @@ class ZActor(object):
         'CacheDir': None, # Must be set for caching.
         'MessageExpireTime': 5, # seconds
         'AskTimeout': 5,
+        'TimeSyncInterval': 3600,
     }
 
     def __init__(self, *args, **kwargs):
@@ -106,6 +108,7 @@ class ZActor(object):
         if not self.settings.get('RunMinimalMode'):
             self.greenlets.append(gevent.spawn(self.check_idle))
             self.greenlets.append(gevent.spawn(self.heartbeat))
+            self.greenlets.append(gevent.spawn(self.sync_time))
         # Install signal handler
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
@@ -427,6 +430,21 @@ class ZActor(object):
                 gevent.sleep(1)
 
             gevent.sleep(heartbeat_interval)
+
+
+    def sync_time(self):
+        interval = self.settings.get('TimeSyncInterval')
+        if not interval:
+            logger.info('Time sync disabled.')
+            return
+        while True:
+            try:
+                subprocess.check_output('ntpdate pool.ntp.org', shell=True)
+                logger.debug('Time sync complete.')
+            except subprocess.CalledProcessError as e:
+                logger.error('Cannot sync time: {}'.format(e))
+            gevent.sleep(interval)
+
 
 
     @check_reply
