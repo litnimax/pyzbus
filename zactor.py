@@ -437,9 +437,11 @@ class ZActor(object):
         if not interval:
             logger.info('Time sync disabled.')
             return
+        else:
+            logger.info('Syncing time every {} seconds'.format(interval))
         while True:
             try:
-                subprocess.check_output('ntpdate pool.ntp.org', shell=True)
+                out = subprocess.check_output('ntpdate pool.ntp.org', shell=True)
                 logger.debug('Time sync complete.')
             except subprocess.CalledProcessError as e:
                 logger.error('Cannot sync time: {}'.format(e))
