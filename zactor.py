@@ -49,6 +49,7 @@ class ZActor(object):
     ask_pool = {} # Here we keep requests that we want replies
     last_pub_sub_reconnect = None
     pub_socket = sub_socket = None
+    settings_updated_on_start = Event()
 
 
     settings = {
@@ -110,6 +111,9 @@ class ZActor(object):
         # Install signal handler
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
+
+        # Give some time to complete socket connect process and spawn settings updater.
+        self.spawn(self.update_settings_request)
 
 
     def _connect_pub_socket(self):
@@ -207,6 +211,7 @@ class ZActor(object):
             self.greenlets.append(gevent.spawn(func, *args, **kwargs))
         except Exception as e:
             logger.exception(repr(e))
+
 
     def spawn_later(self, delay, func, *args, **kwargs):
         try:
@@ -454,8 +459,21 @@ class ZActor(object):
 
 
 
+    def update_settings_request(self):
+        if not self.settings.get('RunMinimalMode'):
+            while not self.settings_updated_on_start.is_set():
+                logger.info('Requesting settings...')
+                self.tell({
+                    'Message': 'UpdateSettingsRequest',
+                    'To': 'Director',
+                })
+                gevent.sleep(5) # Wait 5 seconds to receive settings.
+
+
     @check_reply
     def on_UpdateSettings(self, msg):
+        # Set update settings flag for update_settings_request to quit.
+        self.settings_updated_on_start.set()
         s = self._remove_msg_headers(msg)
         self.apply_settings(s) # Don't change the order! We need to understand
         # old and new settings.
