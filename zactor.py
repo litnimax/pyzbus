@@ -191,9 +191,10 @@ class ZActor(object):
             logger.setLevel(level=logging.DEBUG if new_debug else logging.INFO)
 
 
-    def stop(self, exit=True):
+    def stop(self, exit=True, save_on_stop=True):
         logger.info('Stopping...')
-        self.save_settings()
+        if save_on_stop:
+            self.save_settings()
         sys.stdout.flush()
         sys.stderr.flush()
         self._disconnect_sub_socket()
