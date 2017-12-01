@@ -58,8 +58,8 @@ class ZActor(object):
         'HeartbeatInterval': 120,
         'HeartbeatTimeout': 5,
         'IdleTimeout': 180,
-        'Trace': False,
-        'Debug': False,
+        'Trace': True,
+        'Debug': True,
         'RunMinimalMode': False,
         'CacheDir': None, # Must be set for caching.
         'MessageExpireTime': 5, # seconds
