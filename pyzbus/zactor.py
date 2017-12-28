@@ -62,7 +62,7 @@ class ZActor(object):
         'Debug': True,
         'RunMinimalMode': False,
         'CacheDir': None, # Must be set for caching.
-        'MessageExpireTime': 5, # seconds
+        'MessageExpireTime': 30, # seconds
         'AskTimeout': 5,
     }
 

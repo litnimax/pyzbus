@@ -22,7 +22,7 @@ class ZManager(object):
     settings = {
         'PubAddr': 'tcp://127.0.0.1:8881', # Sending messages to agents
         'SubAddr': 'tcp://127.0.0.1:8882', # Collecting agent messages
-        'MessageExpireTime': 5, # Discard all messages older then 10 seconds
+        'MessageExpireTime': 30, # Discard all messages older then X seconds
         'Trace': True,
         'Debug': True,
         'KeepAlive': 170,

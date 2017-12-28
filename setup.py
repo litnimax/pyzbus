@@ -7,7 +7,7 @@ setup(
     version='0.1',
     description='Python ZeroMQ Pub/Sub bus',
     author='litnimax',
-    author_email='litnimax@pbxware.ru',
+    author_email='litnimaxster@gmail.com',
     url='https://github.com/litnimax/pyzbus',
     license='BSD',
     classifiers=[
@@ -19,6 +19,6 @@ setup(
     ],
     install_requires=[
         'gevent',
-        'zmq',
+        'pyzmq',
     ]
 )
