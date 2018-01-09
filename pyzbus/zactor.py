@@ -14,6 +14,8 @@ import uuid
 import zmq.green as zmq
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SETTINGS_LOCAL = os.path.join(SCRIPT_DIR, 'settings.local')
+
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ class ZActor(object):
 
     settings = {
         'UID': False,
+        'CacheDir': os.path.join(SCRIPT_DIR, 'cache'),
         'SubAddr': 'tcp://127.0.0.1:8881',
         'PubAddr': 'tcp://127.0.0.1:8882',
         'HeartbeatInterval': 120,
@@ -177,7 +180,7 @@ class ZActor(object):
             logger.debug('Did not import cached settings: {}'.format(e))
         # Open local settings and override settings.
         try:
-            self.local_settings = json.loads(open('settings.local').read())
+            self.local_settings = json.loads(open(SETTINGS_LOCAL).read())
             self.settings.update(self.local_settings)
             logger.debug('Loaded settings.local.')
         except Exception as e:
