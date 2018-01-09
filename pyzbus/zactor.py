@@ -361,7 +361,7 @@ class ZActor(object):
         return msg
 
 
-    def ask(self, msg, attempts=2, timeout=None):
+    def ask(self, msg, attempts=2, timeout=None, fake_from=None):
         # This is used to send a message to the bus and wait for reply
         if not timeout:
             timeout = self.settings.get('AskTimeout')
@@ -371,7 +371,7 @@ class ZActor(object):
             'Id': msg_id,
             'SendTime': time.time(),
             'From': self.uid,
-            'ReplyTo': [self.uid],
+            'ReplyTo': [self.uid] if not fake_from else fake_from,
             'SendTimeHuman': datetime.strftime(datetime.now(),
                                                '%Y-%m-%d %H:%M:%S')
         })
