@@ -179,7 +179,7 @@ class ZActor(object):
             logger.debug('Did not import cached settings: {}'.format(e))
         # Open local settings and override settings.
         try:
-            self.local_settings = json.loads(open(self.settings.get('SettingsLocal').read())
+            self.local_settings = json.loads(open(self.settings.get('SettingsLocal')).read())
             self.settings.update(self.local_settings)
             logger.debug('Loaded settings.local.')
         except Exception as e:
