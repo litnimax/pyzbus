@@ -370,8 +370,8 @@ class ZActor(object):
         msg.update({
             'Id': msg_id,
             'SendTime': time.time(),
-            'From': self.uid,
-            'ReplyTo': [self.uid] if not fake_from else [fake_from],
+            'From': self.uid if not fake_from else fake_from,
+            'ReplyTo': [self.uid],
             'SendTimeHuman': datetime.strftime(datetime.now(),
                                                '%Y-%m-%d %H:%M:%S')
         })
