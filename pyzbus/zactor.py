@@ -91,6 +91,8 @@ class ZActor(object):
         uid = self.settings.get('UID')
         if uid:
             self.uid = str(uid)
+        elif os.environ.get('ZAGENT_UID'):
+            self.uid = os.environ.get('ZAGENT_UID')
         else:
             self.uid = str(uuid.getnode())
         logger.info('UID: {}.'.format(self.uid))
