@@ -69,12 +69,12 @@ class ZActor(object):
     }
 
     def __init__(self, *args, **kwargs):
-        # Load local settings.
-        self.load_settings()
         # Override local settings if given
         if kwargs.get('settings'):
             self.settings.update(kwargs.get('settings'))
-
+        # Load local settings.
+        self.load_settings()
+            
         # Adjust logger
         logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
