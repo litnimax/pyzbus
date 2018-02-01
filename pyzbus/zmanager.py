@@ -19,15 +19,7 @@ logger = logging.getLogger(__name__)
 
 class ZManager(object):
 
-    settings = {
-        'PubAddr': 'tcp://127.0.0.1:8881', # Sending messages to agents
-        'SubAddr': 'tcp://127.0.0.1:8882', # Collecting agent messages
-        'MessageExpireTime': 30, # Discard all messages older then X seconds
-        'Trace': True,
-        'Debug': True,
-        'KeepAlive': 170,
-        'LocalSettingsFile': None,
-    }
+    settings = {}
 
     pub_socket = sub_socket = None
     greenlets = []
@@ -115,13 +107,9 @@ class ZManager(object):
 
 
     def load_settings(self):
-        if not self.settings.get('LocalSettingsFile'):
-            logger.info('LocalSettingsFile not set, local settings not loaded.')
-            return
-        try:
-            self.local_settings = json.loads(
-                open(self.settings.get('LocalSettingsFile')).read())
-            self.settings.update(self.local_settings)
-            logger.debug('Loaded settings.local.')
-        except Exception as e:
-            logger.warning('Cannot load settings.local: {}'.format(e))
+        self.settings['SubAddr'] = os.environ.get('SUB_ADDR', 'tcp://*:8881')
+        self.settings['PubAddr'] = os.environ.get('PUB_ADDR', 'tcp://*:8882')
+        self.settings['Trace'] = os.environ.get('TRACE', True)
+        self.settings['Debug'] = os.environ.get('DEBUG', True)
+        self.settings['MessageExpireTime'] = os.environ.get('MESSAGE_EXPIRE_TIME', 30)
+        self.settings['KeepAlive'] = os.environ.get('KEEP_ALIVE', 170)

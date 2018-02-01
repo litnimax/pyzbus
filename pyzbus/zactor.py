@@ -51,30 +51,14 @@ class ZActor(object):
     last_pub_sub_reconnect = None
     pub_socket = sub_socket = None
 
-
-    settings = {
-        'UID': False,
-        'CacheDir': os.path.join(SCRIPT_DIR, 'cache'),
-        'SubAddr': 'tcp://127.0.0.1:8881',
-        'PubAddr': 'tcp://127.0.0.1:8882',
-        'HeartbeatInterval': 120,
-        'HeartbeatTimeout': 5,
-        'IdleTimeout': 180,
-        'Trace': True,
-        'Debug': True,
-        'RunMinimalMode': False,
-        'CacheDir': None, # Must be set for caching.
-        'MessageExpireTime': 30, # seconds
-        'AskTimeout': 5,
-    }
+    settings = {}
 
     def __init__(self, *args, **kwargs):
         # Override local settings if given
+        self.load_settings()
         if kwargs.get('settings'):
             self.settings.update(kwargs.get('settings'))
-        # Load local settings.
-        self.load_settings()
-            
+
         # Adjust logger
         logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
@@ -82,22 +66,6 @@ class ZActor(object):
         logger.info('Version: {}'.format(self.version))
         if self.settings.get('RunMinimalMode'):
             logger.info('Running minimal mode.')
-
-        # Create cache dir if required.
-        if self.settings.get('CacheDir') and not os.path.exists(
-                self.settings.get('CacheDir')):
-            os.mkdir(self.settings.get('CacheDir'))
-            logger.debug('Created cache dir.')
-
-        # Find my UID
-        uid = self.settings.get('UID')
-        if uid:
-            self.uid = str(uid)
-        elif os.environ.get('ZAGENT_UID'):
-            self.uid = os.environ.get('ZAGENT_UID')
-        else:
-            self.uid = str(uuid.getnode())
-        logger.info('UID: {}.'.format(self.uid))
 
         self.context = zmq.Context()
         self.last_pub_sub_reconnect = time.time()
@@ -117,6 +85,7 @@ class ZActor(object):
 
 
     def _connect_pub_socket(self):
+        logger.info('Connecting to Pub: {}'.format(self.settings.get('PubAddr')))
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.RECONNECT_IVL, 1000)
         self.pub_socket.connect(self.settings.get('PubAddr'))
@@ -124,6 +93,7 @@ class ZActor(object):
         logger.debug('Connected PUB socket.')
 
     def _connect_sub_socket(self):
+        logger.info('Connecting to Sub: {}'.format(self.settings.get('SubAddr')))
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.setsockopt(zmq.RECONNECT_IVL, 1000)
         self.sub_socket.connect(self.settings.get('SubAddr'))
@@ -147,44 +117,22 @@ class ZActor(object):
 
 
     def save_settings(self):
-        if self.settings.get('RunMinimalMode'):
-            # Do not save settings.cache
-            return
-        try:
-            if self.settings.get('CacheDir'):
-                logger.debug('Saving settings.cache.')
-                with open(
-                    os.path.join(self.settings.get('CacheDir'),
-                                'settings.cache'), 'w'
-                    ) as file:
-                    file.write('{}\n'.format(
-                        json.dumps(self.settings, indent=4)
-                    ))
-        except Exception as e:
-            logger.error('Cannot save settings.cache: {}'.format(e))
-
+        pass
 
     def load_settings(self):
-        try:
-            if self.settings.get('CacheDir') and \
-                    not self.settings.get('RunMinimalMode'):
-                settings_cache = json.loads(
-                    open(os.path.join(
-                        self.settings.get('CacheDir'),
-                        'settings.cache')
-                    ).read())
-                self.settings.update(settings_cache)
-                logger.debug('Loaded settings.cache.')
-        except Exception as e:
-            logger.debug('Did not import cached settings: {}'.format(e))
-        # Open local settings and override settings.
-        try:
-            self.local_settings = json.loads(open(self.settings.get('SettingsLocal')).read())
-            self.settings.update(self.local_settings)
-            logger.debug('Loaded settings.local.')
-        except Exception as e:
-            logger.warning('Cannot load settings.local: {}'.format(e))
-
+        self.settings['UID'] = os.environ.get('UID', str(uuid.getnode()))
+        self.uid = self.settings['UID']
+        logger.info('UID: {}.'.format(self.uid))
+        self.settings['SubAddr'] = os.environ.get('SUB_ADDR', 'tcp://127.0.0.1:8881')
+        self.settings['PubAddr'] = os.environ.get('PUB_ADDR', 'tcp://127.0.0.1:8882')
+        self.settings['HeartbeatInterval'] = os.environ.get('HEARTBEAT_INTERVAL', 120)
+        self.settings['HeartbeatTimeout'] = os.environ.get('HEARTBEAT_TIMEOUT', 5)
+        self.settings['IdleTimeout'] = os.environ.get('IDLE_TIMEOUT', 180)
+        self.settings['Trace'] = os.environ.get('TRACE', True)
+        self.settings['Debug'] = os.environ.get('DEBUG', True)
+        self.settings['RunMinimalMode'] = os.environ.get('RUN_MINIMAL_MODE', False)
+        self.settings['MessageExpireTime'] = os.environ.get('MESSAGE_EXPIRE_TIME', 30)
+        self.settings['AskTimeout'] = os.environ.get('ASK_TIMEOUT', 5)
 
     def apply_settings(self, new_settings):
         logger.debug('Appling settings.')
