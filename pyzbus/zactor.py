@@ -55,18 +55,15 @@ class ZActor(object):
 
     def __init__(self, *args, **kwargs):
         # Override local settings if given
-        self.load_settings()
+        self.load_env_settings()
         if kwargs.get('settings'):
             self.settings.update(kwargs.get('settings'))
-
+        self.uid = self.settings['UID']
+        logger.info('UID: {}.'.format(self.uid))
         # Adjust logger
         logger.setLevel(level=logging.DEBUG if self.settings.get(
             'Debug') else logging.INFO)
-
         logger.info('Version: {}'.format(self.version))
-        if self.settings.get('RunMinimalMode'):
-            logger.info('Running minimal mode.')
-
         self.context = zmq.Context()
         self.last_pub_sub_reconnect = time.time()
         self._connect_sub_socket()
@@ -76,9 +73,8 @@ class ZActor(object):
         self.greenlets.append(gevent.spawn(self.receive))
         gevent.sleep(0.5) # Give receiver time to complete connection.
 
-        if not self.settings.get('RunMinimalMode'):
-            self.greenlets.append(gevent.spawn(self.check_idle))
-            self.greenlets.append(gevent.spawn(self.heartbeat))
+        self.greenlets.append(gevent.spawn(self.check_idle))
+        self.greenlets.append(gevent.spawn(self.heartbeat))
         # Install signal handler
         gevent.signal(signal.SIGINT, self.stop)
         gevent.signal(signal.SIGTERM, self.stop)
@@ -100,8 +96,7 @@ class ZActor(object):
         self.sub_socket.setsockopt(zmq.IDENTITY, self.uid)
         # Subscribe to messages for actor and also broadcasts
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(self.uid))
-        if not self.settings.get('RunMinimalMode'):
-            self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|*|')
         logger.debug('Connected SUB socket.')
 
 
@@ -116,13 +111,8 @@ class ZActor(object):
         logger.debug('Disconnected SUB socket.')
 
 
-    def save_settings(self):
-        pass
-
-    def load_settings(self):
+    def load_env_settings(self):
         self.settings['UID'] = os.environ.get('UID', str(uuid.getnode()))
-        self.uid = self.settings['UID']
-        logger.info('UID: {}.'.format(self.uid))
         self.settings['SubAddr'] = os.environ.get('SUB_ADDR', 'tcp://127.0.0.1:8881')
         self.settings['PubAddr'] = os.environ.get('PUB_ADDR', 'tcp://127.0.0.1:8882')
         self.settings['HeartbeatInterval'] = os.environ.get('HEARTBEAT_INTERVAL', 120)
@@ -130,23 +120,11 @@ class ZActor(object):
         self.settings['IdleTimeout'] = os.environ.get('IDLE_TIMEOUT', 180)
         self.settings['Trace'] = os.environ.get('TRACE', True)
         self.settings['Debug'] = os.environ.get('DEBUG', True)
-        self.settings['RunMinimalMode'] = os.environ.get('RUN_MINIMAL_MODE', False)
-        self.settings['MessageExpireTime'] = os.environ.get('MESSAGE_EXPIRE_TIME', 30)
         self.settings['AskTimeout'] = os.environ.get('ASK_TIMEOUT', 5)
 
-    def apply_settings(self, new_settings):
-        logger.debug('Appling settings.')
-        # Adjust debug levels
-        new_debug = new_settings.get('Debug')
-        if new_debug:
-            logger.info('Changing Debug to {}'.format(new_debug))
-            logger.setLevel(level=logging.DEBUG if new_debug else logging.INFO)
 
-
-    def stop(self, exit=True, save_on_stop=True):
+    def stop(self, exit=True):
         logger.info('Stopping...')
-        if save_on_stop:
-            self.save_settings()
         sys.stdout.flush()
         sys.stderr.flush()
         self._disconnect_sub_socket()
@@ -167,7 +145,6 @@ class ZActor(object):
             self.greenlets.append(gevent.spawn_later(delay, func, *args, **kwargs))
         except Exception as e:
             logger.exception(repr(e))
-
 
 
     def run(self):
@@ -198,6 +175,7 @@ class ZActor(object):
         logger.info('Subscribed for {}.'.format(s))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'|{}|'.format(s))
 
+
     def unsubscribe(self, s):
         # Add additional subscriptions here.
         logger.info('Unsubscribed from {}.'.format(s))
@@ -222,23 +200,6 @@ class ZActor(object):
                     logger.debug('Received: {}'.format(
                         json.dumps(msg, indent=4)
                     ))
-
-                # Check expiration
-                time_diff = abs(time.time() - float(msg.get('SendTime', 0)))
-                logger.debug('Time difference: {}'.format(time_diff))
-                exp_time = float(self.settings.get('MessageExpireTime'))
-                threashold = 1
-                if time_diff >= exp_time and time_diff <= exp_time + threashold:
-                    # Give a WARNING on 1 second before discard
-                    logger.warning(
-                        'Nearly expired ({} seconds) message {}.'.format(
-                            time_diff, json.dumps(msg, indent=4)))
-                elif time_diff > exp_time + threashold:
-                    logger.error(
-                        'Discarding expired ({} seconds) message {}.'.format(
-                            time_diff, json.dumps(msg, indent=4)))
-                    # Next message please...
-                    continue
 
             except zmq.ZMQError as e:
                 # This can be error due to ping() closing SUB socket.
@@ -405,21 +366,6 @@ class ZActor(object):
     def on_Pong(self, msg):
         From = msg.get('From') if msg.get('From') != self.uid else 'myself'
         logger.debug('Pong received from {}.'.format(From))
-
-
-
-    @check_reply
-    def on_UpdateSettings(self, msg):
-        s = self._remove_msg_headers(msg)
-        self.apply_settings(s) # Don't change the order! We need to understand
-        # old and new settings.
-        self.settings.update(s)
-        self.save_settings()
-        if self.settings.get('Trace'):
-            logger.debug('[UpdateSettings] Received: {}'.format(
-                json.dumps(s, indent=4)))
-        else:
-            logger.info('Settings updated.')
 
 
     def on_KeepAlive(self, msg):

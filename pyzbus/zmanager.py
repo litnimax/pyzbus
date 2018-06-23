@@ -62,23 +62,6 @@ class ZManager(object):
                     else:
                         logger.debug('[RECEIVED] {}'.format(
                             json.dumps(msg, indent=4)))
-                # Check expiration
-                time_diff = abs(time.time() - msg.get('SendTime', 0))
-                logger.debug('{} from {} time difference: {}'.format(
-                    msg.get('Message'), msg.get('From'), time_diff))
-                exp_time = float(self.settings.get('MessageExpireTime'))
-                threashold = 1
-                if time_diff >= exp_time and time_diff <= exp_time + threashold:
-                    # Give a WARNING on 1 second before discard
-                    logger.warning(
-                        'Nearly expired ({} seconds) message {}.'.format(
-                            time_diff, json.dumps(msg, indent=4)))
-                elif time_diff > exp_time + threashold:
-                    logger.error(
-                        'Discarding expired ({} seconds) message {}.'.format(
-                            time_diff, json.dumps(msg, indent=4)))
-                    # Next message please...
-                    continue
 
                 self.pub_socket.send_multipart(['|{}|'.format(msg.get('To')),
                                           json.dumps(msg)])
@@ -111,5 +94,4 @@ class ZManager(object):
         self.settings['PubAddr'] = os.environ.get('PUB_ADDR', 'tcp://*:8882')
         self.settings['Trace'] = os.environ.get('TRACE', True)
         self.settings['Debug'] = os.environ.get('DEBUG', True)
-        self.settings['MessageExpireTime'] = os.environ.get('MESSAGE_EXPIRE_TIME', 30)
         self.settings['KeepAlive'] = os.environ.get('KEEP_ALIVE', 170)
